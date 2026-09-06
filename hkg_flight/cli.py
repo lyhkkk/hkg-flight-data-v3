@@ -7,7 +7,7 @@ import sys
 import os
 import time
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from .cache import CacheSystem, DEFAULT_CACHE_DIR, DEFAULT_MIN_API_INTERVAL, DEFAULT_WEB_PORT
 from .api import APIClient, API_BASE
@@ -31,6 +31,10 @@ from .utils import (
 def search_flights(api, flight_number, date_str=None, include_codeshare=False):
     """
     Search for flights by flight number.
+    
+    Searches for flights where the primary flight number contains the search term.
+    By default, excludes codeshare flights unless include_codeshare is True.
+    If no date specified, searches D-1, D, D+1 (3 days).
 
     Args:
         api: APIClient instance
@@ -41,26 +45,48 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
     Returns:
         list: Matching flight records
     """
-    if date_str is None:
-        date_str = today_str()
-
-    raw_data = api.fetch_flights(date_str)
-    if raw_data is None:
-        return []
-
-    records = normalize_flights(raw_data)
     search_no = normalize_flight_number(flight_number)
-
-    results = []
-    for rec in records:
-        # Always match primary flight number
-        if rec.get("flight_number") == search_no:
-            results.append(rec)
-        # Optionally match codeshare flight numbers
-        elif include_codeshare and search_no in rec.get("all_flight_numbers", ""):
-            results.append(rec)
-
-    return results
+    
+    # If date specified, search only that day
+    if date_str:
+        dates_to_search = [date_str]
+    else:
+        # Search D-1, D, D+1
+        today = date.today()
+        dates_to_search = [
+            (today - timedelta(days=1)).isoformat(),  # D-1
+            today.isoformat(),                         # D
+            (today + timedelta(days=1)).isoformat(),  # D+1
+        ]
+    
+    all_results = []
+    seen_keys = set()
+    
+    for d in dates_to_search:
+        raw_data = api.fetch_flights(d)
+        if raw_data is None:
+            continue
+        
+        records = normalize_flights(raw_data)
+        
+        for rec in records:
+            key = rec.get("key", "")
+            if key in seen_keys:
+                continue
+            
+            # Search primary flight number (contains match)
+            if search_no in rec.get("flight_number", ""):
+                all_results.append(rec)
+                seen_keys.add(key)
+            # Optionally search codeshare flight numbers
+            elif include_codeshare and search_no in rec.get("all_flight_numbers", ""):
+                all_results.append(rec)
+                seen_keys.add(key)
+    
+    # Sort by date and time
+    all_results.sort(key=lambda r: (r.get("date", ""), r.get("time", "")))
+    
+    return all_results
 
 
 def flights_for_date(api, date_str, flight_type="all"):
