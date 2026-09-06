@@ -346,8 +346,13 @@ class CursesTUI(object):
                 except Exception:
                     pass
 
-        # Flights table
-        self._render_flights(3, max(0, h - 4), w)
+        # Render based on mode
+        if self.mode == "alerts":
+            self._render_alerts(3, max(0, h - 4), w)
+        elif self.mode == "airlines":
+            self._render_airlines(3, max(0, h - 4), w)
+        else:
+            self._render_flights(3, max(0, h - 4), w)
 
         # Footer
         footer = " [1]Dept [2]Arr [5]Alerts [6]Airlines [W]Web [Q]uit "
@@ -492,12 +497,17 @@ class CursesTUI(object):
 
     def cmd_search(self):
         """Search for a flight."""
-        self.prompt("Flight number: ")
+        text = self.prompt("Flight number: ")
+        if text:
+            self.filter_text = text
         self.load_view()
 
     def cmd_date(self):
         """View flights by date."""
-        self.prompt("Date (YYYY-MM-DD): ")
+        text = self.prompt("Date (YYYY-MM-DD): ")
+        if text:
+            # Could implement date-specific view here
+            pass
 
     def cmd_alerts(self):
         """Show alerts view."""
@@ -570,6 +580,10 @@ class CursesTUI(object):
             self.filter_text = ""
         elif ch == -1:
             pass
+        elif 32 <= ch < 127:  # Printable characters
+            self.filter_text += chr(ch)
+        elif ch == curses.KEY_BACKSPACE or ch == 127 or ch == 8:
+            self.filter_text = self.filter_text[:-1]
 
         self.render()
 
