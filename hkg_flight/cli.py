@@ -28,7 +28,7 @@ from .utils import (
 )
 
 
-def search_flights(api, flight_number, date_str=None):
+def search_flights(api, flight_number, date_str=None, include_codeshare=False):
     """
     Search for flights by flight number.
 
@@ -36,6 +36,7 @@ def search_flights(api, flight_number, date_str=None):
         api: APIClient instance
         flight_number: Flight number to search for
         date_str: Optional date in YYYY-MM-DD format
+        include_codeshare: If True, also search codeshare flight numbers
 
     Returns:
         list: Matching flight records
@@ -52,9 +53,11 @@ def search_flights(api, flight_number, date_str=None):
 
     results = []
     for rec in records:
+        # Always match primary flight number
         if rec.get("flight_number") == search_no:
             results.append(rec)
-        elif search_no in rec.get("all_flight_numbers", ""):
+        # Optionally match codeshare flight numbers
+        elif include_codeshare and search_no in rec.get("all_flight_numbers", ""):
             results.append(rec)
 
     return results
@@ -187,20 +190,27 @@ def print_flight_table(records, title):
 
 def cmd_query(api, args):
     """Handle 'query' command."""
+    # Parse arguments for --codeshare flag
+    include_codeshare = "--codeshare" in args
+    args = [a for a in args if a != "--codeshare"]
+    
     if not args:
-        print("Usage: python -m hkg_flight query <flight_number> [date]")
+        print("Usage: python -m hkg_flight query <flight_number> [date] [--codeshare]")
         return 1
 
     flight_number = args[0]
     date_str = args[1] if len(args) > 1 else None
 
-    results = search_flights(api, flight_number, date_str)
+    results = search_flights(api, flight_number, date_str, include_codeshare=include_codeshare)
 
     if results:
         for i, rec in enumerate(results, 1):
             print_flight_details(rec, i)
     else:
         print("No flights found for '{}'".format(flight_number))
+    
+    if not include_codeshare:
+        print("\nTip: Use --codeshare to include codeshare flights")
 
     return 0
 
@@ -310,7 +320,7 @@ def print_usage():
     print("  python -m hkg_flight --force             # Force refresh (ignore cache)")
     print()
     print("Commands:")
-    print("  python -m hkg_flight query <flight> [date]")
+    print("  python -m hkg_flight query <flight> [date] [--codeshare]")
     print("  python -m hkg_flight departures [date]")
     print("  python -m hkg_flight arrivals [date]")
     print("  python -m hkg_flight alerts")
@@ -321,6 +331,7 @@ def print_usage():
     print("  --port N        Web server port (default: 8080)")
     print("  --no-poll       Disable live polling")
     print("  --force         Force refresh (clear cache before fetching)")
+    print("  --codeshare     Include codeshare flights in search results")
     print("  --cache-dir DIR Custom cache directory")
 
 

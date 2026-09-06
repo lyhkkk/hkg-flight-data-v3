@@ -5,10 +5,14 @@
 ### CLI 查询命令
 
 ```bash
-# 查询航班
+# 查询航班（默认排除代码共享）
 python -m hkg_flight query <航班号> [日期]
 python -m hkg_flight query CX759
 python -m hkg_flight query CX759 2026-09-07
+
+# 包含代码共享航班
+python -m hkg_flight query <航班号> --codeshare
+python -m hkg_flight query 30 --codeshare
 
 # 今日离境航班
 python -m hkg_flight departures
