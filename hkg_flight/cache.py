@@ -5,6 +5,7 @@ Manages on-disk caching of flight data.
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -21,6 +22,33 @@ DEFAULT_MIN_API_INTERVAL = 0.6
 
 # Default web server port
 DEFAULT_WEB_PORT = 8080
+
+
+def _validate_date(date_str):
+    """Validate date string format (YYYY-MM-DD). Returns True if valid."""
+    if not isinstance(date_str, str):
+        return False
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str))
+
+
+def _safe_cache_path(cache_dir, filename):
+    """
+    Safely construct a cache file path, ensuring it stays within cache_dir.
+    Returns the absolute path, or None if path traversal is detected.
+    """
+    # Get absolute path of cache directory
+    abs_cache_dir = os.path.abspath(cache_dir)
+    
+    # Construct the full path
+    full_path = os.path.join(cache_dir, filename)
+    abs_full_path = os.path.abspath(full_path)
+    
+    # Verify the path is within the cache directory
+    if not abs_full_path.startswith(abs_cache_dir + os.sep) and abs_full_path != abs_cache_dir:
+        log("Path traversal detected: {}".format(filename))
+        return None
+    
+    return abs_full_path
 
 
 class CacheSystem(object):
@@ -41,7 +69,11 @@ class CacheSystem(object):
 
     # -- paths ------------------------------------------------------------
     def flight_path(self, date_str):
-        return os.path.join(self.cache_dir, "flights_{}.json".format(date_str))
+        """Get cache path for a specific date. Returns None if date is invalid."""
+        if not _validate_date(date_str):
+            log("Invalid date format: {}".format(date_str))
+            return None
+        return _safe_cache_path(self.cache_dir, "flights_{}.json".format(date_str))
 
     @property
     def airlines_path(self):
@@ -85,12 +117,18 @@ class CacheSystem(object):
 
     # -- flights ----------------------------------------------------------
     def read_flights(self, date_str):
-        data = self._read_json(self.flight_path(date_str), None)
+        path = self.flight_path(date_str)
+        if path is None:
+            return None
+        data = self._read_json(path, None)
         return data if isinstance(data, list) else None
 
     def write_flights(self, date_str, data):
+        path = self.flight_path(date_str)
+        if path is None:
+            return
         with self.lock:
-            self._write_json(self.flight_path(date_str), data)
+            self._write_json(path, data)
 
     # -- airlines ---------------------------------------------------------
     def read_airlines(self):

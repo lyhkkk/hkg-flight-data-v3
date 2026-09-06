@@ -4,6 +4,7 @@ HTTP server with REST API and SSE for real-time updates.
 """
 
 import json
+import re
 import threading
 import time
 import urllib.parse
@@ -13,20 +14,34 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .utils import log, route_text, gate_stand_text, today_str, normalize_flights, sort_flights, filter_records
 
 
+def _validate_date(date_str):
+    """Validate date string format (YYYY-MM-DD). Returns True if valid."""
+    if not isinstance(date_str, str):
+        return False
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str))
+
+
+def _esc(s):
+    """Escape HTML special characters to prevent XSS."""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#x27;")
+
+
 class WebServer(object):
     """
     HTTP server providing flight data API and web UI.
     Supports Server-Sent Events for real-time updates.
     """
 
-    def __init__(self, poller, api, alert_manager, port=8080):
+    def __init__(self, poller, api, alert_manager, port=8080, host="127.0.0.1"):
         self.poller = poller
         self.api = api
         self.alert_manager = alert_manager
         self.port = port
+        self.host = host
         self._server = None
         self._thread = None
         self._clients = []  # SSE clients
+        self._clients_lock = threading.Lock()
 
     def running(self):
         """Check if server is running."""
@@ -36,10 +51,10 @@ class WebServer(object):
         """Start the web server."""
         try:
             handler = self._make_handler()
-            self._server = ThreadingHTTPServer(("", self.port), handler)
+            self._server = ThreadingHTTPServer((self.host, self.port), handler)
             self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
             self._thread.start()
-            log("Web server started on port {}".format(self.port))
+            log("Web server started on {}:{}".format(self.host, self.port))
             return True
         except OSError as exc:
             log("Failed to start web server: {}".format(exc))
@@ -49,15 +64,18 @@ class WebServer(object):
         """Stop the web server."""
         if self._server:
             self._server.shutdown()
+            self._server.server_close()
             self._server = None
             log("Web server stopped")
 
     def get_stats(self):
         """Get server statistics."""
+        with self._clients_lock:
+            client_count = len(self._clients)
         return {
             "time": datetime.now().isoformat(),
             "alerts": self.alert_manager.active_count() if self.alert_manager else 0,
-            "clients": len(self._clients),
+            "clients": client_count,
             "polling": self.poller.enabled if self.poller else False,
         }
 
@@ -76,7 +94,6 @@ class WebServer(object):
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(data)))
-                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(data)
 
@@ -88,6 +105,10 @@ class WebServer(object):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _send_error(self, status, message):
+                """Send error response."""
+                self._send_json({"error": message}, status)
 
             def do_GET(self):
                 """Handle GET requests."""
@@ -110,7 +131,7 @@ class WebServer(object):
                 elif path == "/api/stream":
                     self._handle_stream()
                 else:
-                    self._send_json({"error": "Not found"}, 404)
+                    self._send_error(404, "Not found")
 
             def _handle_stream(self):
                 """Handle SSE stream."""
@@ -118,11 +139,11 @@ class WebServer(object):
                 self.send_header("Content-Type", "text/event-stream")
                 self.send_header("Cache-Control", "no-cache")
                 self.send_header("Connection", "keep-alive")
-                self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
 
                 client = self.wfile
-                server._clients.append(client)
+                with server._clients_lock:
+                    server._clients.append(client)
 
                 try:
                     # Send initial data
@@ -139,14 +160,20 @@ class WebServer(object):
                 except (BrokenPipeError, ConnectionResetError):
                     pass
                 finally:
-                    if client in server._clients:
-                        server._clients.remove(client)
+                    with server._clients_lock:
+                        if client in server._clients:
+                            server._clients.remove(client)
 
         return Handler
 
     def api_flights(self, params):
         """API: Get flights."""
         date_str = params.get("date", [today_str()])[0]
+        
+        # Validate date format
+        if not _validate_date(date_str):
+            return {"error": "Invalid date format. Use YYYY-MM-DD"}
+        
         flight_type = params.get("type", ["all"])[0]
         terminal = params.get("terminal", [None])[0]
         status = params.get("status", [None])[0]
@@ -182,6 +209,10 @@ class WebServer(object):
         """API: Search flights."""
         flight_number = params.get("flight", [""])[0]
         date_str = params.get("date", [today_str()])[0]
+        
+        # Validate date format
+        if not _validate_date(date_str):
+            return {"error": "Invalid date format. Use YYYY-MM-DD"}
 
         if not flight_number:
             return []
@@ -215,7 +246,7 @@ class WebServer(object):
         return airlines
 
     def web_ui(self):
-        """Generate web UI HTML."""
+        """Generate web UI HTML with XSS protection."""
         return """<!DOCTYPE html>
 <html>
 <head>
@@ -286,6 +317,12 @@ class WebServer(object):
         const API_BASE = '/api';
         let allFlights = [];
 
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;'
+            }[c]));
+        }
+
         async function loadFlights() {
             const res = await fetch(`${API_BASE}/flights`);
             allFlights = await res.json();
@@ -319,13 +356,13 @@ class WebServer(object):
             const tbody = document.getElementById('flights-body');
             tbody.innerHTML = flights.slice(0, 100).map(f => `
                 <tr>
-                    <td>${f.time || '--:--'}</td>
-                    <td><strong>${f.flight_number || 'N/A'}</strong></td>
+                    <td>${esc(f.time) || '--:--'}</td>
+                    <td><strong>${esc(f.flight_number) || 'N/A'}</strong></td>
                     <td>${f.type === 'arrival' ? 'ARR' : 'DEP'}</td>
-                    <td>HKG ${f.type === 'arrival' ? '←' : '→'} ${f.type === 'arrival' ? (f.origin || 'N/A') : (f.destination || 'N/A')}</td>
-                    <td><span class="status status-${f.status_category || 'scheduled'}">${f.status || 'N/A'}</span></td>
-                    <td>${f.type === 'departure' ? ('Gate ' + (f.gate || '--')) : ('Stand ' + (f.stand || '--'))}</td>
-                    <td>${f.terminal || '-'}</td>
+                    <td>HKG ${f.type === 'arrival' ? '←' : '→'} ${f.type === 'arrival' ? (esc(f.origin) || 'N/A') : (esc(f.destination) || 'N/A')}</td>
+                    <td><span class="status status-${esc(f.status_category) || 'scheduled'}">${esc(f.status) || 'N/A'}</span></td>
+                    <td>${f.type === 'departure' ? ('Gate ' + (esc(f.gate) || '--')) : ('Stand ' + (esc(f.stand) || '--'))}</td>
+                    <td>${esc(f.terminal) || '-'}</td>
                 </tr>
             `).join('');
         }

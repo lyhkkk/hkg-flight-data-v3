@@ -104,6 +104,7 @@ def run_simple_tui(poller, api, alert_manager, web_server):
                 print("  ⚠ {} {}: {} → {} | {}".format(flight, field, old_v, new_v, status))
             print()
             print("  Press any key to return...")
+            return  # Exit after rendering alerts
 
         elif mode == "airlines":
             # Show airlines
@@ -118,6 +119,7 @@ def run_simple_tui(poller, api, alert_manager, web_server):
                 print("  ... and {} more".format(len(airlines) - 20))
             print()
             print("  Press any key to return...")
+            return  # Exit after rendering airlines
 
         else:
             # Show flights - ensure data is loaded
@@ -542,7 +544,7 @@ class CursesTUI(object):
             self.cmd_alerts()
         elif ch == ord("6"):
             self.cmd_airlines()
-        elif ch.lower() == ord("w"):
+        elif ch in (ord("w"), ord("W")):
             self.cmd_web()
 
         elif ch == 27 or ch in (ord("0"),):  # Escape

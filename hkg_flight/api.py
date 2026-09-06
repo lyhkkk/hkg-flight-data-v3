@@ -4,6 +4,7 @@ Handles communication with the HKIA flight API.
 """
 
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -13,6 +14,13 @@ from .utils import log
 
 
 API_BASE = "https://www.hongkongairport.com/flightinfo-rest/rest"
+
+
+def _validate_date(date_str):
+    """Validate date string format (YYYY-MM-DD). Returns True if valid."""
+    if not isinstance(date_str, str):
+        return False
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str))
 
 
 class APIClient(object):
@@ -62,8 +70,15 @@ class APIClient(object):
         Returns:
             list: Raw flight data from API, or None on failure
         """
+        # Validate date format to prevent path traversal and injection
+        if not _validate_date(date_str):
+            log("Invalid date format: {}".format(date_str))
+            return None
+        
         self._rate_limit()
-        url = "{}/flights?date={}&span=1".format(API_BASE, date_str)
+        # Use urlencode to safely construct query parameters
+        params = urllib.parse.urlencode({"date": date_str, "span": "1"})
+        url = "{}/flights?{}".format(API_BASE, params)
         data = self._request_json(url)
         if data is not None and self.cache is not None:
             self.cache.write_flights(date_str, data)

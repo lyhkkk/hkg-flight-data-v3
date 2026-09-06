@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HKG Flight Data v3 — 代码审查报告</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c232c; --border:rgba(255,255,255,.09);
+  --text:#e6edf3; --muted:#8b98a9; --accent:#faa718;
+  --ok:#4ade80; --warn:#f59e0b; --bad:#ef4444; --info:#58a6ff;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;padding:32px 20px 80px}
+.wrap{max-width:1080px;margin:0 auto}
+header{border-bottom:1px solid var(--border);padding-bottom:24px;margin-bottom:32px}
+h1{font-size:1.9rem;letter-spacing:-.02em}
+h1 span{color:var(--accent)}
+.sub{color:var(--muted);font-size:.9rem;margin-top:8px;font-family:var(--mono)}
+h2{font-size:1.25rem;margin:44px 0 16px;padding-left:12px;border-left:3px solid var(--accent)}
+h3{font-size:1rem;margin:24px 0 10px;color:var(--text)}
+p{margin:10px 0;color:#c9d4e0}
+a{color:var(--info)}
+
+/* score cards */
+.scores{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:24px 0}
+.score{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;text-align:center}
+.score .v{font-size:1.7rem;font-weight:700;font-family:var(--mono)}
+.score .k{font-size:.8rem;color:var(--muted);margin-top:4px;letter-spacing:.05em}
+.g{color:var(--ok)} .a{color:var(--warn)} .r{color:var(--bad)}
+
+/* summary box */
+.box{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:16px 0}
+.box.tight{padding:14px 18px}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 14px;font-size:.9rem}
+.kv dt{color:var(--muted)}
+
+/* finding */
+.f{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin:14px 0}
+.f.p0{border-left:3px solid var(--bad)}
+.f.p1{border-left:3px solid var(--warn)}
+.f.p2{border-left:3px solid var(--info)}
+.f h4{font-size:1rem;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.badge{font-size:.68rem;font-family:var(--mono);padding:2px 7px;border-radius:4px;font-weight:700;letter-spacing:.05em}
+.b-p0{background:rgba(239,68,68,.16);color:#ff8f8f;border:1px solid rgba(239,68,68,.35)}
+.b-p1{background:rgba(245,158,11,.16);color:#fcc46b;border:1px solid rgba(245,158,11,.35)}
+.b-p2{background:rgba(88,166,255,.14);color:#8fc4ff;border:1px solid rgba(88,166,255,.3)}
+.b-tag{background:var(--panel2);color:var(--muted);border:1px solid var(--border);font-weight:500}
+.loc{font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-bottom:8px}
+.f p{font-size:.92rem;margin:6px 0}
+pre{background:#0a0e13;border:1px solid var(--border);border-radius:8px;padding:12px 14px;overflow-x:auto;font-family:var(--mono);font-size:.8rem;line-height:1.6;margin:10px 0;color:#c9d4e0}
+pre .c{color:#6b7a8f} pre .k{color:#ff7b72} pre .s{color:#a5d6ff}
+.fix{background:rgba(74,222,128,.07);border:1px solid rgba(74,222,128,.2);border-radius:7px;padding:10px 13px;font-size:.88rem;margin-top:10px}
+.fix b{color:var(--ok)}
+
+table{width:100%;border-collapse:collapse;font-size:.86rem;margin:14px 0}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--accent);font-weight:600;background:var(--panel2)}
+td code,th code{font-family:var(--mono);font-size:.8rem;background:var(--panel2);padding:1px 5px;border-radius:3px}
+ul{margin:8px 0 8px 20px} li{margin:5px 0;color:#c9d4e0;font-size:.92rem}
+.roadmap td:first-child{white-space:nowrap;font-family:var(--mono);color:var(--muted)}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--border);color:var(--muted);font-size:.82rem}
+.pill{display:inline-block;background:var(--panel2);border:1px solid var(--border);border-radius:20px;padding:2px 10px;font-size:.75rem;font-family:var(--mono);color:var(--muted);margin:2px 3px 2px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>HKG Flight Data v3 — <span>代码审查报告</span></h1>
+  <div class="sub">审查日期 2026-09-07 · 范围：hkg_flight/ 包（2 400 行）+ hkg_flight.py（2 378 行）+ 测试 + 文档 · 共 30 项发现</div>
+</header>
+
+<div class="scores">
+  <div class="score"><div class="v r">D</div><div class="k">安全 SECURITY</div></div>
+  <div class="score"><div class="v a">C+</div><div class="k">实用 UTILITY</div></div>
+  <div class="score"><div class="v r">D</div><div class="k">简洁 SIMPLICITY</div></div>
+  <div class="score"><div class="v a">B-</div><div class="k">美观 AESTHETICS</div></div>
+  <div class="score"><div class="v r">D</div><div class="k">可维护性</div></div>
+</div>
+
+<div class="box">
+  <dl class="kv">
+    <dt>总体判断</dt><dd>功能骨架完整、标准库零依赖、缓存与限速设计思路是对的，但项目当前处于<strong>两版并存且已分叉</strong>的状态：包版本是从单文件版"拆出来"的，拆的过程中<strong>丢失了单文件版后来做的修复（Web UI 转义、暗色主题）</strong>，同时引入了新的导出/渲染缺陷。<strong>测试套件当前 100% 无法运行</strong>，而 <code>PROJECT-STATUS.md</code> 记录"58 个测试全部通过"——这条记录是失效的。</dd>
+    <dt>阻断级问题</dt><dd>6 项 P0：测试不可运行、Web UI 存储型 XSS、路径穿越任意文件写、双实现分叉、curses TUI 按 <code>W</code> 崩溃、简单 TUI 告警/航司视图崩溃。</dd>
+    <dt>最大风险</dt><dd>Web 服务<strong>默认监听 0.0.0.0 且无任何鉴权</strong>，叠加 XSS 与路径穿越，等于把"读航班 + 往本机任意路径写 JSON"的接口暴露给局域网。</dd>
+  </dl>
+</div>
+
+<h2>一、必须先修的 6 项（P0）</h2>
+
+<div class="f p0">
+  <h4>1. 测试套件根本跑不起来 <span class="badge b-p0">P0</span> <span class="badge b-tag">可维护性</span></h4>
+  <div class="loc">test_hkg_flight.py:15-37 · hkg_flight/__init__.py:21-35</div>
+  <p>测试从包里导入 <code>Poller</code>、<code>search_flights</code>、<code>flights_for_date</code>、<code>load_airlines</code>，但 <code>__init__.py</code> 只导出了 <code>CacheSystem / APIClient / AlertManager</code> 和 utils 里的几个函数。结果是 import 阶段就失败，58 个测试一个都没执行。</p>
+<pre><span class="c">$ python -m unittest test_hkg_flight</span>
+ImportError: cannot import name 'Poller' from 'hkg_flight'</pre>
+  <p>这也解释了为什么 <code>PROJECT-STATUS.md</code> 里"58 个测试全部通过"的结论没有被 CI 拦住——它从未真正验证过。</p>
+  <div class="fix"><b>修复：</b>在 <code>__init__.py</code> 补上 <code>Poller</code>、以及从 <code>.cli</code> 导出 <code>search_flights / flights_for_date / load_airlines</code>（注意 <code>.cli</code> 导入会带入 <code>sys</code> 副作用，更干净的做法是把这三个函数下沉到 <code>utils.py</code> 或新建 <code>query.py</code>，再由 cli 引用）。同时补一个 GitHub Actions 或 pre-commit，把测试真正跑起来。</div>
+</div>
+
+<div class="f p0">
+  <h4>2. 两套实现并存且已经分叉 <span class="badge b-p0">P0</span> <span class="badge b-tag">简洁 · 可维护性</span></h4>
+  <div class="loc">hkg_flight.py（2 378 行，单文件）↔ hkg_flight/（8 个模块，约 2 400 行）</div>
+  <p>两份代码实现了同一套东西，但已经不是同一版本了：</p>
+  <table>
+    <tr><th>维度</th><th>单文件 hkg_flight.py</th><th>包 hkg_flight/</th></tr>
+    <tr><td>Web UI</td><td>CSS 变量 + 完整暗色主题 + <code>esc()</code> 转义 + 状态色</td><td>退化版：无转义、无主题变量、无空状态</td></tr>
+    <tr><td>API 契约</td><td><code>{"date","count","flights":[...]}</code> 包装结构</td><td>直接返回裸数组</td></tr>
+    <tr><td>搜索接口</td><td><code>{"query","count","results":[...]}</code></td><td>裸数组</td></tr>
+    <tr><td>文档</td><td>README.md 写的是单文件用法</td><td>COMMANDS.md / PROJECT-STATUS.md 写的是包用法</td></tr>
+  </table>
+  <p>两份前端/后端互不兼容，改任何一处都要同步两遍，而同步已经失败了一次（见第 3 条 XSS）。</p>
+  <div class="fix"><b>修复：</b>二选一，立刻删掉另一份。建议保留<strong>包结构</strong>（可测试、可扩展），但把单文件版的 Web UI（含 <code>esc()</code> 与 CSS 变量）与包装式 API 契约<strong>移植</strong>回 <code>web.py</code>；然后统一 README/COMMANDS 为 <code>python -m hkg_flight</code>。</div>
+</div>
+
+<div class="f p0">
+  <h4>3. Web UI 存储型 XSS（包版本） <span class="badge b-p0">P0</span> <span class="badge b-tag">安全</span></h4>
+  <div class="loc">hkg_flight/web.py:320-330</div>
+  <p>表格用模板字符串拼 <code>innerHTML</code>，插入的 <code>flight_number</code> / <code>origin</code> / <code>destination</code> / <code>status</code> 全部来自<strong>外部 HKIA API 的返回</strong>，没有任何转义。</p>
+<pre>tbody.innerHTML = flights.slice(0, 100).map(f =&gt; `
+    &lt;td&gt;&lt;strong&gt;${f.flight_number || 'N/A'}&lt;/strong&gt;&lt;/td&gt;
+    &lt;td&gt;&lt;span class="status status-${f.status_category}"&gt;${f.status}&lt;/span&gt;&lt;/td&gt;
+` ).join('');</pre>
+  <p>只要 HKIA 接口返回（或链路被劫持返回）含 <code>&lt;img src=x onerror=...&gt;</code> 的字段，脚本就在访问者浏览器里执行。讽刺的是单文件版 <code>hkg_flight.py:1289</code> 已经写了 <code>const esc=s=&gt;String(s??'').replace(/[&amp;&lt;&gt;"']/g,...)</code>——<strong>拆分时把这个修复弄丢了</strong>。</p>
+  <div class="fix"><b>修复：</b>把单文件版的 <code>esc()</code> 搬过来，对所有插值调用；或改用 <code>textContent</code> / <code>document.createElement</code> 构建行。再加 <code>Content-Security-Policy: default-src 'self'</code> 响应头做纵深防御。</div>
+</div>
+
+<div class="f p0">
+  <h4>4. 路径穿越 → 任意文件写入 <span class="badge b-p0">P0</span> <span class="badge b-tag">安全</span></h4>
+  <div class="loc">web.py:149,189 → api.py:66-69 → cache.py:44</div>
+  <p><code>/api/flights?date=</code> 与 <code>/api/search?date=</code> 的查询参数<strong>未做任何校验</strong>就直接拼进缓存文件名：</p>
+<pre><span class="c">cache.py:44</span>
+return os.path.join(self.cache_dir, "flights_{}.json".format(date_str))
+
+<span class="c">实测：</span>
+date=2026-09-07      -&gt; ~/.hkg_flight_cache/flights_2026-09-07.json
+date=../../../evil   -&gt; ~/.hkg_flight_cache/flights_../../../evil.json  <span class="c"># 逃出缓存目录</span></pre>
+  <p>配合 <code>write_flights</code> 的 <code>json.dump</code>，攻击者可以在本机<strong>任意可写路径写 JSON 文件</strong>（内容部分可控：来自 API 响应）。同时该参数还被拼进上游 URL，存在查询参数注入。</p>
+  <div class="fix"><b>修复：</b>用正则白名单校验：<code>if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str): return 400</code>；写入前再用 <code>os.path.abspath(path).startswith(abspath(cache_dir))</code> 断言一次。URL 拼接改用 <code>urllib.parse.urlencode</code>。</div>
+</div>
+
+<div class="f p0">
+  <h4>5. curses TUI 按 <code>W</code> 直接崩溃 <span class="badge b-p0">P0</span> <span class="badge b-tag">实用</span></h4>
+  <div class="loc">hkg_flight/tui.py:545</div>
+<pre>elif ch.lower() == ord("w"):
+    self.cmd_web()</pre>
+  <p><code>getch()</code> 返回的是 <strong>int</strong>，int 没有 <code>.lower()</code>。用户按下 W（README 里宣传的"启动/停止 Web 服务"）会抛 <code>AttributeError</code>，而 <code>run()</code> 循环没有 try/except，异常直接穿出 <code>curses.wrapper</code>，<strong>整个 TUI 挂掉、终端状态残留</strong>。</p>
+  <div class="fix"><b>修复：</b><code>elif ch in (ord('w'), ord('W')):</code>。同时给 <code>handle_key</code> 加兜底 <code>except Exception: log(...)</code>，别让一个按键杀死整个界面。</div>
+</div>
+
+<div class="f p0">
+  <h4>6. 简单 TUI 的告警/航司视图必崩 <span class="badge b-p0">P0</span> <span class="badge b-tag">实用</span></h4>
+  <div class="loc">hkg_flight/tui.py:122-131</div>
+  <p><code>render()</code> 里 <code>flights</code> 只在 <code>else</code> 分支赋值，但分支结束后无条件使用它。按 <code>5</code>（告警）或 <code>6</code>（航司）→ <code>UnboundLocalError</code>。</p>
+<pre>if mode == "alerts":   ...   <span class="c"># 不定义 flights</span>
+elif mode == "airlines": ... <span class="c"># 不定义 flights</span>
+else:  flights = get_flights()
+pages = max(1, (len(flights) + 19) // 20)   <span class="c"># ← 崩溃点</span></pre>
+  <div class="fix"><b>修复：</b>在 alerts / airlines 分支末尾 <code>return</code>。</div>
+</div>
+
+<h2>二、安全（Security）</h2>
+
+<div class="f p1">
+  <h4>7. Web 服务默认绑定 0.0.0.0 且无鉴权 <span class="badge b-p1">P1</span></h4>
+  <div class="loc">hkg_flight/web.py:39</div>
+<pre>self._server = ThreadingHTTPServer(("", self.port), handler)</pre>
+  <p>空 host = 监听所有网卡。README 写的是 "localhost:8080"，实际会暴露到整个局域网/公网（若在云服务器上运行）。没有 token、没有 Basic Auth、没有 IP 白名单，任何人都能读 <code>/api/*</code> 并利用上面的穿越写文件。</p>
+  <div class="fix"><b>修复：</b>默认改为 <code>("127.0.0.1", port)</code>，需要对外时通过 <code>--host</code> 显式开启并强制要求设置访问 token。</div>
+</div>
+
+<div class="f p1">
+  <h4>8. CORS 全开 <code>Access-Control-Allow-Origin: *</code> <span class="badge b-p1">P1</span></h4>
+  <div class="loc">web.py:79, 121</div>
+  <p>所有 JSON 响应和 SSE 都带 <code>*</code>。任意第三方页面都能用受害者浏览器读取本机 8080 端口的航班数据（配合上面的 XSS 可形成完整攻击链）。本地服务没必要开 CORS。</p>
+  <div class="fix"><b>修复：</b>删除该头；若确实需要前端跨域，限制为 <code>http://127.0.0.1:PORT</code>。</div>
+</div>
+
+<div class="f p1">
+  <h4>9. <code>--force</code> + <code>--cache-dir</code> 可递归删除任意目录 <span class="badge b-p1">P1</span> <span class="badge b-tag">危险脚枪</span></h4>
+  <div class="loc">cli.py:157-163（clear_cache）· cli.py:402-405（--force 触发）· cli.py:284-288（clear-cache 命令）</div>
+<pre>if os.path.exists(cache_dir):
+    shutil.rmtree(cache_dir)      <span class="c"># 无路径合法性校验</span></pre>
+  <p><code>--cache-dir</code> 是用户可控的，<code>--force</code> 会无条件调用 <code>clear_cache(cache)</code>。一旦误传 <code>.</code>、<code>~</code> 或某个项目路径，就是一次不可恢复的 <code>rmtree</code>。</p>
+  <div class="fix"><b>修复：</b>(a) 拒绝删除非缓存目录：校验 <code>basename(cache_dir) == ".hkg_flight_cache"</code> 或要求 <code>--yes</code> 二次确认；(b) 改用"逐文件删除"而非 <code>rmtree</code>；(c) <code>--force</code> 语义改为"本次请求绕过缓存"，而不是"删光缓存"。</div>
+</div>
+
+<div class="f p2">
+  <h4>10. 单文件版存在无效转义序列 <span class="badge b-p2">P2</span> <span class="badge b-tag">前瞻性</span></h4>
+  <div class="loc">hkg_flight.py:1312</div>
+<pre>esc(f.origin||'--').replace(/\|/g,'/')   <span class="c"># 在普通字符串中，\| 是无效转义</span>
+<span class="c">Python 3.12+ 报 SyntaxWarning，未来版本将升级为 SyntaxError</span></pre>
+  <div class="fix"><b>修复：</b>把含正则的 HTML 模板字符串改为 raw string：<code>r"""..."""</code>。</div>
+</div>
+
+<div class="box tight">
+  <h3>其他安全观察（低优先级但建议一并处理）</h3>
+  <ul>
+    <li><strong>访问日志被静默吞掉</strong>（<code>web.py:69-71</code> <code>log_message</code> 直接 <code>pass</code>）——出事后无法审计谁访问过。至少保留到 stderr 或文件。</li>
+    <li><strong><code>os.system("cls"/"clear")</code></strong>（<code>tui.py:60</code>）——虽然参数是常量不构成注入，但会拉起 shell 进程；改用 <code>print("\033[2J\033[H")</code> 或 <code>subprocess</code>。</li>
+    <li><strong>无请求超时/体量限制</strong>：<code>BaseHTTPRequestHandler</code> 未设置 <code>timeout</code>；SSE 连接永久占用线程（<code>ThreadingHTTPServer</code> 每连接一线程，多开几个标签页即可耗尽）。建议给 SSE 设上限与空闲超时。</li>
+    <li><strong>无 TLS、无安全响应头</strong>（CSP / X-Content-Type-Options / Referrer-Policy 全缺）。</li>
+    <li><strong><code>_clients</code> 列表无锁</strong>（<code>web.py:29,125,142</code>）：多线程 append/remove 存在竞态，改用 <code>threading.Lock</code> 或 <code>set</code>+锁。</li>
+  </ul>
+</div>
+
+<h2>三、实用（Utility）</h2>
+
+<div class="f p1">
+  <h4>11. <code>--port</code> / <code>--cache-dir</code> 的参数值没被消费 <span class="badge b-p1">P1</span></h4>
+  <div class="loc">cli.py:395</div>
+<pre>args = [a for a in argv if a not in ("--web", "--no-poll", "--force", "--port", "--cache-dir")]</pre>
+  <p>只移除了 flag 本身，没移除它后面的<strong>值</strong>。实测：<code>['--web','--port','9000']</code> → 残留位置参数 <code>['9000']</code> → 被当成子命令 → 打印 usage 并返回 1。</p>
+  <p><strong>后果：<code>python -m hkg_flight --web --port 9000</code> 完全无法使用</strong>，而 README 和 COMMANDS.md 第一条就是这个用法。<code>--cache-dir</code> 同理。</p>
+  <div class="fix"><b>修复：</b>丢掉手写解析，改用 <code>argparse</code>（带子命令 <code>query/departures/arrivals/alerts/clear-cache</code>）。这是本项目性价比最高的一次重构——顺带解决下面第 12 条的 <code>--help</code> 问题。</div>
+</div>
+
+<div class="f p1">
+  <h4>12. curses TUI 的告警 / 航司视图是空白的 <span class="badge b-p1">P1</span></h4>
+  <div class="loc">tui.py:306-348 · tui.py:440-467</div>
+  <p><code>render()</code> 无条件调用 <code>_render_flights()</code>，从不按 <code>self.mode</code> 分发。<code>_render_alerts()</code> 和 <code>_render_airlines()</code> 写好了但<strong>从未被调用</strong>。而 <code>visible_flights()</code> 对 <code>mode=="alerts"</code> 返回空列表，所以按 5/6 只会看到 "No flights found."。</p>
+  <div class="fix"><b>修复：</b><code>render()</code> 里按 mode 分发到三个 <code>_render_*</code>。</div>
+</div>
+
+<div class="f p1">
+  <h4>13. curses 模式下无法输入过滤文本 <span class="badge b-p1">P1</span></h4>
+  <div class="loc">tui.py:527-570 · README.md:80</div>
+  <p>README 承诺"Type any text 过滤航班号/航线"，但 <code>handle_key</code> 里<strong>没有任何分支把可打印字符追加到 <code>filter_text</code></strong>。过滤功能在 curses 版中完全不存在（只有简单 TUI 版有，且实现是把整个 dict 转字符串再匹配，输入 "gate" 会命中所有行）。</p>
+  <div class="fix"><b>修复：</b>在 <code>handle_key</code> 末尾加 <code>elif 32 &lt;= ch &lt; 127: self.filter_text += chr(ch)</code>，并处理 <code>KEY_BACKSPACE</code>。</div>
+</div>
+
+<div class="f p1">
+  <h4>14. Web 服务关闭后端口不释放 <span class="badge b-p1">P1</span></h4>
+  <div class="loc">web.py:48-53</div>
+<pre>self._server.shutdown()      <span class="c"># 只停 serve_forever 循环</span>
+self._server = None          <span class="c"># 缺少 server_close()，监听 socket 未关闭</span></pre>
+  <p>TUI 里按 <code>W</code> 关闭再开启会撞上 <code>Address already in use</code>（在 Windows 上尤其明显）。</p>
+  <div class="fix"><b>修复：</b><code>shutdown()</code> 后紧跟 <code>server_close()</code>。</div>
+</div>
+
+<div class="box tight">
+  <h3>其余功能性缺陷（P2）</h3>
+  <table class="roadmap">
+    <tr><th>位置</th><th>问题</th></tr>
+    <tr><td>tui.py:255,557-561</td><td><code>self.scroll</code> 累加但渲染时从不使用 → ↑/↓ 键无效，README 声称可滚动。</td></tr>
+    <tr><td>tui.py:491-498</td><td><code>cmd_search</code> / <code>cmd_date</code> 弹出输入框后<strong>丢弃用户输入</strong>，且没有任何按键绑定到它们 → 死功能。</td></tr>
+    <tr><td>tui.py:548</td><td><code>ch == 27 or ch in (ord("0"),)</code>：按数字 <code>0</code> 会清空过滤器（疑似笔误）；紧随其后的 <code>elif ch == 27</code> 是不可达的重复分支。</td></tr>
+    <tr><td>web.py:127-140 / 337-339</td><td>SSE 端点只发一次初始数据 + 永久心跳，<strong>从不推送更新</strong>；前端实际靠 <code>setInterval(30s)</code> 轮询。README 声称"auto-refreshes via SSE"名不副实。要么真正推送，要么删掉 SSE 端点。</td></tr>
+    <tr><td>web.py:244,254</td><td><code>.alert-banner</code> 元素与样式存在，但 JS 从未显示它 → 告警在 Web UI 上完全不可见。</td></tr>
+    <tr><td>utils.py:69-72</td><td><code>log()</code> 只用 <code>date.today()</code>，<strong>日志没有时间</strong>，无法判断轮询间隔/告警时序。改用 <code>datetime.now().isoformat(timespec="seconds")</code>。</td></tr>
+    <tr><td>poller.py:50-55</td><td><code>stop()</code> 用 <code>join(timeout=5)</code>，但线程可能阻塞在 <code>_stop_event.wait(30)</code> → join 必然超时，停止是"假成功"（靠 daemon 线程兜底）。</td></tr>
+    <tr><td>cli.py:146-156</td><td><code>clear-cache 2026-09-07</code> 实际是写入 <code>null</code> 而非删除文件；<code>read_flights</code> 会返回 <code>None</code> 尚可，但磁盘文件还在，语义不一致。</td></tr>
+    <tr><td>alerts.py:119-128</td><td>告警 history <strong>无上界增长</strong>（历史上一次就清了 100 条）。需要在写入时截断（如保留最近 500 条）或按天滚动。</td></tr>
+    <tr><td>cli.py:364-422</td><td>没有 <code>--help/-h</code> 处理；<code>-h</code> 会走到 <code>print_usage()</code> 但返回码为 1，不符合 CLI 惯例。</td></tr>
+    <tr><td>cli.py:296</td><td>报错提示 <code>pip install hkg-flight-data[web]</code>，但项目<strong>没有 pyproject.toml / setup.py</strong>，这个包根本不存在。</td></tr>
+    <tr><td>README.md:66-85</td><td>键位表与实现不符：文档写 <code>1</code>=搜索、<code>2</code>=按日期、<code>3</code>=离港、<code>4</code>=到港；实现是 <code>1</code>=离港、<code>2</code>=到港、<code>5</code>=告警、<code>6</code>=航司。</td></tr>
+  </table>
+</div>
+
+<h2>四、简洁（Simplicity）</h2>
+
+<p>最大的简洁性问题是<strong>第 2 条的 4 800 行重复代码</strong>。在此之下，还有一批可以直接删掉的死代码和未使用导入。</p>
+
+<div class="f p2">
+  <h4>15. 死代码清单 <span class="badge b-p2">P2</span></h4>
+  <table>
+    <tr><th>位置</th><th>内容</th><th>说明</th></tr>
+    <tr><td>cache.py:104-113</td><td><code>read_state</code> / <code>write_state</code></td><td>整个项目无人调用，<code>state.json</code> 永不生成</td></tr>
+    <tr><td>poller.py:116-138</td><td><code>_make_snapshot</code> / <code>_snapshot_changed</code></td><td>变更检测已由 <code>AlertManager.process_flight</code> 承担，这两个静态方法从未被调用</td></tr>
+    <tr><td>utils.py:125-142</td><td><code>status_pair()</code></td><td>返回 0-6 的"颜色对 ID"，但 <code>_setup_curses_colors</code> 只定义了 1-5，且 TUI 里用的是自己的 if/elif。映射也不一致（<code>estimated</code>→1 与 <code>gate_closed</code>→1 撞车）</td></tr>
+    <tr><td>api.py:28</td><td><code>self._lock = False</code></td><td>布尔量当锁用，从未被读取</td></tr>
+    <tr><td>tui.py:230-239</td><td><code>_attr()</code></td><td>定义了但无人调用</td></tr>
+    <tr><td>web.py:440-467 对应包版</td><td><code>_render_alerts</code> / <code>_render_airlines</code></td><td>写好未接线（见第 12 条）</td></tr>
+    <tr><td>__init__.py:41-44</td><td><code>main()</code></td><td>与 <code>__main__.py</code> 完全重复</td></tr>
+  </table>
+</div>
+
+<div class="f p2">
+  <h4>16. 未使用的导入（共 25 处） <span class="badge b-p2">P2</span></h4>
+<pre>hkg_flight/cli.py      : API_BASE, DEFAULT_MIN_API_INTERVAL, filter_records, format_time,
+                         get_status_info, log, make_flight_key, status_pair, threading
+hkg_flight/tui.py      : get_status_info, log, threading
+hkg_flight/web.py      : filter_records, gate_stand_text, route_text
+hkg_flight/cache.py    : sys
+cleanup_alerts.py      : json</pre>
+  <div class="fix"><b>修复：</b>接入 <code>ruff</code> 或 <code>flake8</code>，一行命令即可全部清理，并加到 CI 里防止回潮。</div>
+</div>
+
+<div class="f p2">
+  <h4>17. 重复的渲染逻辑与魔法数字 <span class="badge b-p2">P2</span></h4>
+  <ul>
+    <li><strong>表格打印三处重复</strong>：<code>cli.print_flight_table</code>、<code>tui.run_simple_tui</code>、<code>tui.CursesTUI._render_flights</code> 各自拼一遍同样的 7 列表头。应该抽出一个 <code>format_row(rec, widths)</code>。</li>
+    <li><strong>取数逻辑重复</strong>：<code>run_simple_tui.get_flights()</code> 与 <code>CursesTUI.visible_flights()</code> 是同一段代码的两个副本。</li>
+    <li><strong>魔法数字散落</strong>：每页 20 行、CLI 截断 50 行、Web 截断 100 行、轮询 30s、限速 0.6s、SSE 心跳 1s、航空公司预览 20 条——全硬编码在函数体里。应集中到一个 <code>config.py</code> 或常量区。</li>
+    <li><strong><code>__init__.py</code> 未定义 <code>__all__</code></strong>，公共 API 边界不清（也是第 1 条导出缺失的根源）。</li>
+  </ul>
+</div>
+
+<h2>五、美观（Aesthetics）</h2>
+
+<div class="f p1">
+  <h4>18. 包版 Web UI 相对单文件版是明显退步 <span class="badge b-p1">P1</span></h4>
+  <div class="loc">hkg_flight/web.py:217-342 ↔ hkg_flight.py:1230-1340</div>
+  <table>
+    <tr><th>能力</th><th>单文件版</th><th>包版</th></tr>
+    <tr><td>主题</td><td>CSS 变量 <code>--bg/--panel/--accent/--ok/--warn/--bad</code></td><td>硬编码色值，无变量</td></tr>
+    <tr><td>XSS 转义</td><td><code>esc()</code></td><td><span class="r">无</span></td></tr>
+    <tr><td>状态色</td><td><code>statusClass()</code> 映射完整</td><td>只有 scheduled/boarding/departed/cancelled 四种</td></tr>
+    <tr><td>空状态</td><td>"No flights found" 居中提示</td><td><span class="r">空白表格</span></td></tr>
+    <tr><td>代码共享航班号</td><td>展示 REG 列</td><td>无</td></tr>
+  </table>
+  <div class="fix"><b>修复：</b>直接把单文件版的 <code>web_ui()</code>（第 1230-1340 行整段，注意改 raw string）搬进 <code>web.py</code>，并同步把 API 契约改成包装结构。</div>
+</div>
+
+<div class="f p2">
+  <h4>19. CLI 表格长内容会顶坏对齐 <span class="badge b-p2">P2</span></h4>
+  <div class="loc">cli.py:195-211</div>
+<pre>print("{:&lt;6} {:&lt;10} {:&lt;6} {:&lt;20} {:&lt;18} {:&lt;12} {:&lt;5}".format(...))</pre>
+  <p>格式串只设最小宽度、<strong>不做截断</strong>。多航段航线（如 <code>HKG -&gt; SIN|BKK</code>）或长状态文本超过 20 列时，会把后面所有列整体推右，表格错位。中文/emoji（如 <code>⚠</code>）宽度按 1 计算，同样会错位。</p>
+  <div class="fix"><b>修复：</b>统一 <code>truncate(s, n)</code> 辅助函数（并按显示宽度 <code>unicodedata.east_asian_width</code> 计算），所有列先截断再格式化。</div>
+</div>
+
+<div class="box tight">
+  <h3>美观细节建议</h3>
+  <ul>
+    <li><strong>无颜色开关</strong>：CLI/TUI 无条件输出 ANSI 转义，重定向到文件或管道给 <code>grep</code> 时会出现乱码。应检测 <code>sys.stdout.isatty()</code>，并提供 <code>--no-color</code> 与 <code>NO_COLOR</code> 环境变量支持。</li>
+    <li><strong>排版风格不统一</strong>：CLI 详情用 <code>--- Flight #1 ---</code> 分隔、表格用 <code>—</code> 连接标题、告警用 <code>⚠</code>+<code>→</code>。建议统一为一套符号体系。</li>
+    <li><strong>TUI 列宽固定</strong>（6/10/6/20/18/12/5 = 80 字符），窄终端下直接截断；应随 <code>getmaxyx()</code> 动态分配比例。</li>
+    <li><strong>Web UI 无排序</strong>：默认按 API 返回顺序，未按时间排序，对"航班看板"这个核心场景不友好。</li>
+    <li><strong>提示噪音</strong>：<code>cmd_query</code> 无论是否命中都会打印 "Tip: Use --codeshare..."。</li>
+  </ul>
+</div>
+
+<h2>六、修复路线图</h2>
+<table class="roadmap">
+  <tr><th>阶段</th><th>动作</th><th>涉及文件</th></tr>
+  <tr><td><strong>第 1 天</strong><br>止血</td><td>① 修 <code>W</code> 键崩溃与简单 TUI 的 UnboundLocalError<br>② Web 服务改绑 127.0.0.1、删除 CORS <code>*</code><br>③ 所有 <code>date</code> 参数加正则白名单 + 路径断言<br>④ 前端加 <code>esc()</code><br>⑤ <code>clear_cache</code> 加目录名校验</td><td>tui.py, web.py, api.py, cache.py, cli.py</td></tr>
+  <tr><td><strong>第 2-3 天</strong><br>收敛</td><td>⑥ 决定保留包结构，<strong>删除 hkg_flight.py</strong>（先 <code>git tag</code> 留档）<br>⑦ 把单文件版的 Web UI / API 契约移植回 <code>web.py</code><br>⑧ 补 <code>__init__.py</code> 导出 + <code>__all__</code>，让测试跑通<br>⑨ CLI 迁移到 <code>argparse</code>（顺带修 <code>--port</code>、<code>--help</code>）</td><td>全项目</td></tr>
+  <tr><td><strong>第 1 周</strong><br>补全</td><td>⑩ <code>render()</code> 按 mode 分发；curses 过滤输入<br>⑪ <code>server_close()</code>；SSE 要么真推送要么删除<br>⑫ 清理死代码与未使用导入，接入 <code>ruff</code><br>⑬ 加 <code>pyproject.toml</code>（依赖可选 <code>[web]</code>）与 GitHub Actions<br>⑭ 统一 README/COMMANDS 键位与 API 文档</td><td>tui.py, web.py, 全项目, 文档</td></tr>
+  <tr><td><strong>后续</strong></td><td>⑮ 告警 history 上限 + 定时清理<br>⑯ CLI 列宽按显示宽度截断、<code>--no-color</code><br>⑰ 常量集中到 <code>config.py</code></td><td>alerts.py, cli.py, 全项目</td></tr>
+</table>
+
+<h2>七、值得肯定的地方</h2>
+<div class="box">
+  <span class="pill">零第三方依赖</span><span class="pill">缓存原子写（tmp + os.replace）</span><span class="pill">限速 0.6s 礼貌抓取</span><span class="pill">API 失败自动回退缓存</span><span class="pill">curses 缺失自动降级</span><span class="pill">curses I/O 全面 try/except 防溢出</span><span class="pill">代码共享航班号保留</span><span class="pill">告警 active/history 生命周期设计</span><span class="pill">cleanup_alerts.py 默认 dry-run</span>
+  <p style="margin-top:12px">架构分层（api / cache / alerts / poller / cli / tui / web）本身是<strong>清晰且正确</strong>的，拆分方向没问题——问题出在"拆完没有收尾"：既没删旧版，也没做回归验证。把上面第 1-3 天的收敛做完，这个项目的工程质量会有数量级的提升。</p>
+</div>
+
+<footer>
+  生成于 2026-09-07 · 静态审查 + 本地运行验证（Python 3.13.12）· 未做外部网络请求<br>
+  验证命令：<code>python -m unittest test_hkg_flight</code>（失败）、<code>compile()</code> 全量语法检查（发现 1 处 SyntaxWarning）
+</footer>
+
+</div>
+</body>
+</html>

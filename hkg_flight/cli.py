@@ -143,23 +143,45 @@ def load_airlines(api):
     return api.fetch_airlines()
 
 
-def clear_cache(cache, date_str=None):
+def clear_cache(cache, date_str=None, confirm=False):
     """
     Clear cached data.
     
     Args:
         cache: CacheSystem instance
         date_str: Specific date to clear, or None to clear all
+        confirm: If True, skip confirmation prompt
     """
+    cache_dir = cache.cache_dir
+    
+    # Safety check: only delete if it's the expected cache directory
+    basename = os.path.basename(os.path.abspath(cache_dir))
+    if basename != ".hkg_flight_cache" and not basename.startswith("hkg_flight"):
+        log("Refusing to delete non-cache directory: {}".format(cache_dir))
+        print("Error: Refusing to delete non-cache directory: {}".format(cache_dir))
+        return
+    
     if date_str:
         cache.write_flights(date_str, None)
         print("Cleared cache for {}".format(date_str))
     else:
+        # Confirm before deleting all cache
+        if not confirm:
+            response = input("Delete ALL cache in {}? (yes/no): ".format(cache_dir))
+            if response.lower() != "yes":
+                print("Cancelled.")
+                return
+        
         import shutil
-        cache_dir = cache.cache_dir
         if os.path.exists(cache_dir):
-            shutil.rmtree(cache_dir)
-            os.makedirs(cache_dir)
+            # Delete files individually instead of rmtree
+            for filename in os.listdir(cache_dir):
+                filepath = os.path.join(cache_dir, filename)
+                try:
+                    if os.path.isfile(filepath):
+                        os.remove(filepath)
+                except Exception as exc:
+                    log("Failed to delete {}: {}".format(filepath, exc))
             print("Cleared all cache in {}".format(cache_dir))
 
 
@@ -378,6 +400,8 @@ def main(argv=None):
         try:
             port_idx = argv.index("--port")
             port = int(argv[port_idx + 1])
+            # Remove flag and value from argv
+            argv = argv[:port_idx] + argv[port_idx + 2:]
         except (IndexError, ValueError):
             print("Invalid port number")
             return 1
@@ -387,12 +411,14 @@ def main(argv=None):
         try:
             cache_idx = argv.index("--cache-dir")
             cache_dir = argv[cache_idx + 1]
+            # Remove flag and value from argv
+            argv = argv[:cache_idx] + argv[cache_idx + 2:]
         except (IndexError, ValueError):
             print("Invalid cache directory")
             return 1
 
-    # Remove processed args
-    args = [a for a in argv if a not in ("--web", "--no-poll", "--force", "--port", "--cache-dir")]
+    # Remove remaining flags
+    args = [a for a in argv if a not in ("--web", "--no-poll", "--force")]
 
     # Initialize components
     cache = CacheSystem(cache_dir=cache_dir)

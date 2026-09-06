@@ -21,6 +21,7 @@ Usage:
 from .cache import CacheSystem, DEFAULT_CACHE_DIR, DEFAULT_MIN_API_INTERVAL, DEFAULT_WEB_PORT
 from .api import APIClient, API_BASE
 from .alerts import AlertManager
+from .poller import Poller
 from .utils import (
     today_str,
     normalize_flight_number,
@@ -32,10 +33,48 @@ from .utils import (
     log,
     get_status_info,
     status_pair,
+    normalize_flights,
+    sort_flights,
+    filter_records,
 )
 
 __version__ = "3.0.0"
 __author__ = "HKG Flight Data Team"
+
+# Import query functions from cli module
+# These are placed here to avoid circular imports
+from .cli import search_flights, flights_for_date, load_airlines
+
+__all__ = [
+    # Core classes
+    "CacheSystem",
+    "APIClient",
+    "AlertManager",
+    "Poller",
+    # Constants
+    "DEFAULT_CACHE_DIR",
+    "DEFAULT_MIN_API_INTERVAL",
+    "DEFAULT_WEB_PORT",
+    "API_BASE",
+    # Utility functions
+    "today_str",
+    "normalize_flight_number",
+    "make_flight_key",
+    "route_text",
+    "gate_stand_text",
+    "format_time",
+    "format_raw_time",
+    "log",
+    "get_status_info",
+    "status_pair",
+    "normalize_flights",
+    "sort_flights",
+    "filter_records",
+    # Query functions
+    "search_flights",
+    "flights_for_date",
+    "load_airlines",
+]
 
 
 def main():
