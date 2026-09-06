@@ -3,6 +3,7 @@ HKG Flight Data v3 - CLI Module
 Command-line interface and entry point.
 """
 
+import argparse
 import sys
 import os
 import time
@@ -145,7 +146,7 @@ def load_airlines(api):
 
 def clear_cache(cache, date_str=None, confirm=False):
     """
-    Clear cached data.
+    Clear cached data safely.
     
     Args:
         cache: CacheSystem instance
@@ -236,44 +237,33 @@ def print_flight_table(records, title):
         print("\n... and {} more flights".format(len(records) - 50))
 
 
-def cmd_query(api, args):
+def cmd_query(args, api):
     """Handle 'query' command."""
-    # Parse arguments for --codeshare flag
-    include_codeshare = "--codeshare" in args
-    args = [a for a in args if a != "--codeshare"]
-    
-    if not args:
-        print("Usage: python -m hkg_flight query <flight_number> [date] [--codeshare]")
-        return 1
-
-    flight_number = args[0]
-    date_str = args[1] if len(args) > 1 else None
-
-    results = search_flights(api, flight_number, date_str, include_codeshare=include_codeshare)
+    results = search_flights(api, args.flight, args.date, include_codeshare=args.codeshare)
 
     if results:
         for i, rec in enumerate(results, 1):
             print_flight_details(rec, i)
     else:
-        print("No flights found for '{}'".format(flight_number))
+        print("No flights found for '{}'".format(args.flight))
     
-    if not include_codeshare:
+    if not args.codeshare:
         print("\nTip: Use --codeshare to include codeshare flights")
 
     return 0
 
 
-def cmd_departures(api, args):
+def cmd_departures(args, api):
     """Handle 'departures' command."""
-    date_str = args[0] if args else today_str()
+    date_str = args.date or today_str()
     records = flights_for_date(api, date_str, "departure")
     print_flight_table(records, "Departures {}".format(date_str))
     return 0
 
 
-def cmd_arrivals(api, args):
+def cmd_arrivals(args, api):
     """Handle 'arrivals' command."""
-    date_str = args[0] if args else today_str()
+    date_str = args.date or today_str()
     records = flights_for_date(api, date_str, "arrival")
     print_flight_table(records, "Arrivals {}".format(date_str))
     return 0
@@ -303,28 +293,27 @@ def cmd_alerts(alert_manager):
     return 0
 
 
-def cmd_clear_cache(cache, args):
+def cmd_clear_cache(args, cache):
     """Handle 'clear-cache' command."""
-    date_str = args[0] if args else None
-    clear_cache(cache, date_str)
+    clear_cache(cache, args.date, confirm=args.yes)
     return 0
 
 
-def cmd_web(poller, api, alert_manager, port):
+def cmd_web(args, poller, api, alert_manager):
     """Handle 'web' command - start web server."""
     try:
         from .web import WebServer
     except ImportError:
-        print("Web server module not available. Install with: pip install hkg-flight-data[web]")
+        print("Web server module not available.")
         return 1
 
-    web_server = WebServer(poller, api, alert_manager, port=port)
+    web_server = WebServer(poller, api, alert_manager, port=args.port)
     if not web_server.start():
-        print("Could not start web server on port {}".format(port))
+        print("Could not start web server on port {}".format(args.port))
         return 1
 
     print("✈ HKG Flight Data web server")
-    print("  http://localhost:{}".format(port))
+    print("  http://127.0.0.1:{}".format(args.port))
     print("  Press Ctrl+C to stop")
 
     try:
@@ -338,7 +327,7 @@ def cmd_web(poller, api, alert_manager, port):
     return 0
 
 
-def cmd_tui(poller, api, alert_manager, web_server):
+def cmd_tui(args, poller, api, alert_manager, web_server):
     """Handle 'tui' command - start TUI interface."""
     try:
         from .tui import start_tui, run_simple_tui
@@ -357,124 +346,128 @@ def cmd_tui(poller, api, alert_manager, web_server):
     return 0
 
 
-def print_usage():
-    """Print usage information."""
-    print("HKG Flight Data v3")
-    print()
-    print("Usage:")
-    print("  python -m hkg_flight                     # Start TUI (default)")
-    print("  python -m hkg_flight --web [--port N]    # Start web server")
-    print("  python -m hkg_flight --no-poll           # TUI without live polling")
-    print("  python -m hkg_flight --force             # Force refresh (ignore cache)")
-    print()
-    print("Commands:")
-    print("  python -m hkg_flight query <flight> [date] [--codeshare]")
-    print("  python -m hkg_flight departures [date]")
-    print("  python -m hkg_flight arrivals [date]")
-    print("  python -m hkg_flight alerts")
-    print("  python -m hkg_flight clear-cache [date]")
-    print()
-    print("Options:")
-    print("  --web           Start web server mode")
-    print("  --port N        Web server port (default: 8080)")
-    print("  --no-poll       Disable live polling")
-    print("  --force         Force refresh (clear cache before fetching)")
-    print("  --codeshare     Include codeshare flights in search results")
-    print("  --cache-dir DIR Custom cache directory")
+def create_parser():
+    """Create the argument parser."""
+    parser = argparse.ArgumentParser(
+        prog="hkg_flight",
+        description="HKG Flight Data v3 - Flight information system for Hong Kong International Airport",
+        epilog="Example: python -m hkg_flight query CX759"
+    )
+    
+    # Global options
+    parser.add_argument(
+        "--cache-dir", 
+        default=DEFAULT_CACHE_DIR,
+        help="Custom cache directory (default: ~/.hkg_flight_cache)"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force refresh (clear cache before fetching)"
+    )
+    
+    # Subcommands
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+    
+    # query command
+    query_parser = subparsers.add_parser("query", help="Search for a flight by number")
+    query_parser.add_argument("flight", help="Flight number to search for")
+    query_parser.add_argument("date", nargs="?", default=None, help="Date in YYYY-MM-DD format (default: D-1, D, D+1)")
+    query_parser.add_argument("--codeshare", action="store_true", help="Include codeshare flights")
+    
+    # departures command
+    departures_parser = subparsers.add_parser("departures", help="List departures")
+    departures_parser.add_argument("date", nargs="?", default=None, help="Date in YYYY-MM-DD format (default: today)")
+    
+    # arrivals command
+    arrivals_parser = subparsers.add_parser("arrivals", help="List arrivals")
+    arrivals_parser.add_argument("date", nargs="?", default=None, help="Date in YYYY-MM-DD format (default: today)")
+    
+    # alerts command
+    subparsers.add_parser("alerts", help="Show active alerts")
+    
+    # clear-cache command
+    clear_parser = subparsers.add_parser("clear-cache", help="Clear cached data")
+    clear_parser.add_argument("date", nargs="?", default=None, help="Specific date to clear (default: all)")
+    clear_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    
+    # web command
+    web_parser = subparsers.add_parser("web", help="Start web server")
+    web_parser.add_argument("--port", "-p", type=int, default=DEFAULT_WEB_PORT, help="Web server port (default: 8080)")
+    
+    # tui command (default when no subcommand)
+    tui_parser = subparsers.add_parser("tui", help="Start TUI interface")
+    tui_parser.add_argument("--no-poll", action="store_true", help="Disable live polling")
+    tui_parser.add_argument("--port", "-p", type=int, default=DEFAULT_WEB_PORT, help="Web server port for W key (default: 8080)")
+    
+    return parser
 
 
 def main(argv=None):
     """Main entry point."""
-    if argv is None:
-        argv = sys.argv[1:]
-
-    # Parse arguments
-    web_only = "--web" in argv
-    no_poll = "--no-poll" in argv
-    force_refresh = "--force" in argv
-    port = DEFAULT_WEB_PORT
-    cache_dir = DEFAULT_CACHE_DIR
-
-    # Extract port if specified
-    if "--port" in argv:
-        try:
-            port_idx = argv.index("--port")
-            port = int(argv[port_idx + 1])
-            # Remove flag and value from argv
-            argv = argv[:port_idx] + argv[port_idx + 2:]
-        except (IndexError, ValueError):
-            print("Invalid port number")
-            return 1
-
-    # Extract cache dir if specified
-    if "--cache-dir" in argv:
-        try:
-            cache_idx = argv.index("--cache-dir")
-            cache_dir = argv[cache_idx + 1]
-            # Remove flag and value from argv
-            argv = argv[:cache_idx] + argv[cache_idx + 2:]
-        except (IndexError, ValueError):
-            print("Invalid cache directory")
-            return 1
-
-    # Remove remaining flags
-    args = [a for a in argv if a not in ("--web", "--no-poll", "--force")]
-
+    parser = create_parser()
+    args = parser.parse_args(argv)
+    
     # Initialize components
-    cache = CacheSystem(cache_dir=cache_dir)
+    cache = CacheSystem(cache_dir=args.cache_dir)
     api = APIClient(cache=cache)
     alert_manager = AlertManager(cache=cache)
-
+    
     # Force refresh: clear cache first
-    if force_refresh:
+    if args.force:
         print("Force refresh: clearing cache...")
-        clear_cache(cache)
-
-    # Handle CLI commands
-    if args:
-        cmd = args[0]
-        if cmd == "query":
-            return cmd_query(api, args[1:])
-        elif cmd == "departures":
-            return cmd_departures(api, args[1:])
-        elif cmd == "arrivals":
-            return cmd_arrivals(api, args[1:])
-        elif cmd == "alerts":
-            return cmd_alerts(alert_manager)
-        elif cmd == "clear-cache":
-            return cmd_clear_cache(cache, args[1:])
-        else:
-            print_usage()
-            return 1
-
-    # Try to import poller for TUI/Web modes
-    try:
-        from .poller import Poller
-        poller = Poller(cache=cache, api=api, alert_manager=alert_manager)
-        poller.enabled = not no_poll
-    except ImportError:
-        poller = None
-
-    # Web server mode
-    if web_only:
-        if poller:
+        clear_cache(cache, confirm=True)
+    
+    # Handle commands
+    if args.command == "query":
+        return cmd_query(args, api)
+    elif args.command == "departures":
+        return cmd_departures(args, api)
+    elif args.command == "arrivals":
+        return cmd_arrivals(args, api)
+    elif args.command == "alerts":
+        return cmd_alerts(alert_manager)
+    elif args.command == "clear-cache":
+        return cmd_clear_cache(args, cache)
+    elif args.command == "web":
+        # Import poller for web mode
+        try:
+            from .poller import Poller
+            poller = Poller(cache=cache, api=api, alert_manager=alert_manager)
             poller.start()
-        return cmd_web(poller, api, alert_manager, port)
-
-    # TUI mode (default)
-    print("Starting TUI mode...")
-    print("Use --web for web server, or query/departures/arrivals/alerts for CLI commands")
-    print()
-    
-    # Start poller if available - this will do an initial data fetch
-    if poller:
-        poller.start()
-        # Wait a moment for data to load
-        time.sleep(0.5)
-    
-    # Try to start TUI
-    try:
-        from .tui import start_tui, run_simple_tui
+        except ImportError:
+            poller = None
+        return cmd_web(args, poller, api, alert_manager)
+    elif args.command == "tui":
+        # Import poller for TUI mode
+        try:
+            from .poller import Poller
+            poller = Poller(cache=cache, api=api, alert_manager=alert_manager)
+            poller.enabled = not args.no_poll
+            poller.start()
+            # Wait a moment for data to load
+            time.sleep(0.5)
+        except ImportError:
+            poller = None
+        
+        web_server = None
+        try:
+            from .web import WebServer
+            web_server = WebServer(poller, api, alert_manager, port=args.port)
+        except ImportError:
+            pass
+        
+        return cmd_tui(args, poller, api, alert_manager, web_server)
+    else:
+        # Default: start TUI
+        try:
+            from .poller import Poller
+            poller = Poller(cache=cache, api=api, alert_manager=alert_manager)
+            poller.start()
+            time.sleep(0.5)
+        except ImportError:
+            poller = None
+        
         web_server = None
         try:
             from .web import WebServer
@@ -482,24 +475,7 @@ def main(argv=None):
         except ImportError:
             pass
         
-        # Try curses TUI first, fall back to simple TUI
-        try:
-            import curses
-            start_tui(poller, api, alert_manager, web_server)
-        except Exception as e:
-            print("curses TUI error: {}".format(e))
-            print("Falling back to simple TUI...")
-            run_simple_tui(poller, api, alert_manager, web_server)
-    except ImportError as e:
-        print("TUI not available: {}".format(e))
-        print("Use --web for web server or CLI commands.")
-        print()
-        print("Example commands:")
-        print("  python -m hkg_flight query CX759")
-        print("  python -m hkg_flight departures")
-        print("  python -m hkg_flight --web")
-
-    return 0
+        return cmd_tui(args, poller, api, alert_manager, web_server)
 
 
 if __name__ == "__main__":
