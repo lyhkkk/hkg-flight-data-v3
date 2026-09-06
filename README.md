@@ -1,11 +1,11 @@
 # HKG Flight Data v3
 
-A single-file flight information retrieval system for Hong Kong International Airport (HKIA).
+A flight information retrieval system for Hong Kong International Airport (HKIA).
 It uses only the Python 3.7+ standard library and provides:
 
 - Curses TUI (with a plain-text fallback for terminals without curses)
 - Web dashboard with auto-refresh
-- One-shot CLI commands for searching flights and listing departures/arrivals
+- CLI commands for searching flights and listing departures/arrivals
 
 ## Requirements
 
@@ -14,49 +14,59 @@ It uses only the Python 3.7+ standard library and provides:
 
 ## Quick Start
 
-Run from the directory containing `hkg_flight.py`:
-
 ```bash
-# Start the interactive TUI (default)
-python hkg_flight.py
+# Clone the repository
+git clone https://github.com/lyhkkk/hkg-flight-data-v3.git
+cd hkg-flight-data-v3
 
-# Start the web dashboard on http://localhost:8080
-python hkg_flight.py --web
+# Start the interactive TUI (default)
+python -m hkg_flight
+
+# Start the web dashboard on http://127.0.0.1:8080
+python -m hkg_flight web
 
 # Start the web dashboard on a custom port
-python hkg_flight.py --web --port 9000
+python -m hkg_flight web --port 9000
 
 # TUI without the 30-second background poller
-python hkg_flight.py --no-poll
+python -m hkg_flight tui --no-poll
 ```
 
 ## CLI Commands
 
 ```bash
 # Search for a flight by flight number (e.g. CX759)
-python hkg_flight.py query CX759
+python -m hkg_flight query CX759
 
 # Search for a flight on a specific date
-python hkg_flight.py query CX759 2026-08-16
+python -m hkg_flight query CX759 2026-08-16
+
+# Search including codeshare flights
+python -m hkg_flight query 30 --codeshare
 
 # List today's departures
-python hkg_flight.py departures
+python -m hkg_flight departures
 
 # List departures for a specific date
-python hkg_flight.py departures 2026-08-16
+python -m hkg_flight departures 2026-08-16
 
 # List today's arrivals
-python hkg_flight.py arrivals
+python -m hkg_flight arrivals
 
 # List arrivals for a specific date
-python hkg_flight.py arrivals 2026-08-16
+python -m hkg_flight arrivals 2026-08-16
 
 # Show active gate/stand change alerts
-python hkg_flight.py alerts
+python -m hkg_flight alerts
+
+# Clear cache
+python -m hkg_flight clear-cache
+python -m hkg_flight clear-cache 2026-08-16
+python -m hkg_flight clear-cache --yes  # Skip confirmation
 ```
 
-Dates use `YYYY-MM-DD` format. If no date is given, the current date is used for
-`departures` / `arrivals`.
+Dates use `YYYY-MM-DD` format. If no date is given for `query`, it searches D-1, D, and D+1.
+If no date is given for `departures` / `arrivals`, the current date is used.
 
 ## TUI Controls
 
@@ -64,10 +74,8 @@ In the curses interface:
 
 | Key | Action |
 | --- | --- |
-| `1` | Search flight |
-| `2` | View flights by date |
-| `3` | Show departures |
-| `4` | Show arrivals |
+| `1` | Show departures |
+| `2` | Show arrivals |
 | `5` | Show active alerts |
 | `6` | Show airlines |
 | `W` | Start / stop the web server |
@@ -92,10 +100,10 @@ on-screen prompts.
 Start it with:
 
 ```bash
-python hkg_flight.py --web [--port N]
+python -m hkg_flight web [--port N]
 ```
 
-The dashboard is available at `http://localhost:PORT` (default `8080`). It
+The dashboard is available at `http://127.0.0.1:PORT` (default `8080`). It
 auto-refreshes via SSE and exposes JSON API endpoints such as:
 
 - `/api/flights`
@@ -114,11 +122,10 @@ polling history.
 
 ## Verification
 
-The file has been checked with:
+Run the test suite:
 
 ```bash
-python -c "import py_compile; py_compile.compile('hkg_flight.py', doraise=True)"
+python -m unittest test_hkg_flight
 ```
 
-It is a valid UTF-8 Python 3 script (declared as `utf-8`, no BOM) and compiles
-without syntax errors.
+All 58 tests should pass.
