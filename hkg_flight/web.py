@@ -246,33 +246,54 @@ class WebServer(object):
         return airlines
 
     def web_ui(self):
-        """Generate web UI HTML with XSS protection."""
-        return """<!DOCTYPE html>
+        """Generate web UI HTML with XSS protection and CSS variables."""
+        return r"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>HKG Flight Data</title>
     <style>
+        :root {
+            --bg: #0f1923;
+            --panel: #1a2a3a;
+            --panel2: #1c232c;
+            --border: rgba(255,255,255,.09);
+            --text: #e6edf3;
+            --muted: #8b98a9;
+            --accent: #faa718;
+            --ok: #4ade80;
+            --warn: #f59e0b;
+            --bad: #ef4444;
+            --info: #58a6ff;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1923; color: #fff; }
-        .header { background: #1a2a3a; padding: 1rem; display: flex; justify-content: space-between; align-items: center; }
-        .header h1 { font-size: 1.5rem; color: #faa718; }
-        .stats { display: flex; gap: 1rem; font-size: 0.9rem; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
+        .header { background: var(--panel); padding: 1rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+        .header h1 { font-size: 1.5rem; color: var(--accent); }
+        .stats { display: flex; gap: 1rem; font-size: 0.9rem; color: var(--muted); }
         .container { max-width: 1400px; margin: 0 auto; padding: 1rem; }
         .filters { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-        .filters input, .filters select { padding: 0.5rem; border: 1px solid #333; background: #1a2a3a; color: #fff; border-radius: 4px; }
+        .filters input, .filters select { padding: 0.5rem; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 4px; }
         .filters input { width: 200px; }
+        .filters input:focus, .filters select:focus { outline: none; border-color: var(--accent); }
         table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-        th, td { padding: 0.5rem; text-align: left; border-bottom: 1px solid #333; }
-        th { background: #1a2a3a; color: #faa718; }
-        tr:hover { background: #1a2a3a; }
-        .status { padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.8rem; }
-        .status-scheduled { background: #333; }
-        .status-boarding { background: #1a5f3f; }
-        .status-departed { background: #2a4a3a; }
-        .status-cancelled { background: #5f1a1a; }
-        .alert-banner { background: #faa718; color: #000; padding: 0.5rem; text-align: center; display: none; }
+        th, td { padding: 0.5rem; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: var(--panel); color: var(--accent); position: sticky; top: 0; }
+        tr:hover { background: var(--panel); }
+        .status { padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.8rem; display: inline-block; }
+        .status-scheduled { background: #333; color: var(--muted); }
+        .status-boarding { background: rgba(74,222,128,.16); color: var(--ok); border: 1px solid rgba(74,222,128,.3); }
+        .status-departed { background: rgba(88,166,255,.14); color: var(--info); border: 1px solid rgba(88,166,255,.3); }
+        .status-cancelled { background: rgba(239,68,68,.16); color: var(--bad); border: 1px solid rgba(239,68,68,.3); }
+        .status-delayed { background: rgba(245,158,11,.16); color: var(--warn); border: 1px solid rgba(245,158,11,.3); }
+        .empty-state { text-align: center; padding: 3rem; color: var(--muted); }
+        .alert-banner { background: var(--accent); color: #000; padding: 0.5rem; text-align: center; display: none; }
+        @media (max-width: 768px) {
+            .filters { flex-direction: column; }
+            .filters input { width: 100%; }
+            th, td { padding: 0.3rem; font-size: 0.8rem; }
+        }
     </style>
 </head>
 <body>
@@ -312,6 +333,7 @@ class WebServer(object):
             <tbody id="flights-body">
             </tbody>
         </table>
+        <div id="empty-state" class="empty-state" style="display:none;">No flights found</div>
     </div>
     <script>
         const API_BASE = '/api';
@@ -354,6 +376,15 @@ class WebServer(object):
             }
 
             const tbody = document.getElementById('flights-body');
+            const emptyState = document.getElementById('empty-state');
+            
+            if (flights.length === 0) {
+                tbody.innerHTML = '';
+                emptyState.style.display = 'block';
+                return;
+            }
+            
+            emptyState.style.display = 'none';
             tbody.innerHTML = flights.slice(0, 100).map(f => `
                 <tr>
                     <td>${esc(f.time) || '--:--'}</td>
