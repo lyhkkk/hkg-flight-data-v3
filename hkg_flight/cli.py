@@ -65,17 +65,24 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
         today = now_hkt.date()
         
         # Determine search range based on HKT time
-        # 22:00-02:00: search today + next day (late night flights)
-        # 02:00-22:00: search today only
-        if current_hour >= 22 or current_hour < 2:
-            # Late night: search today and next day
+        # 22:00-23:59: search today + next day (late night flights)
+        # 00:00-01:59: search yesterday + today (early morning flights)
+        # 02:00-21:59: search today only
+        if current_hour >= 22:
+            # 22:00-23:59: search today + next day
             dates_to_search = [
-                today.isoformat(),                         # Today
-                (today + td(days=1)).isoformat(),          # Next day
+                today.isoformat(),                         # Today (D)
+                (today + td(days=1)).isoformat(),          # Next day (D+1)
+            ]
+        elif current_hour < 2:
+            # 00:00-01:59: search yesterday + today
+            dates_to_search = [
+                (today - td(days=1)).isoformat(),          # Yesterday (D-1)
+                today.isoformat(),                         # Today (D)
             ]
         else:
-            # Normal hours: search today only
-            dates_to_search = [today.isoformat()]
+            # 02:00-21:59: search today only
+            dates_to_search = [today.isoformat()]  # Today (D)
     
     all_results = []
     seen_keys = set()
