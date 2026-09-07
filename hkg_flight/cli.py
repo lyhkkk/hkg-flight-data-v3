@@ -35,7 +35,11 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
     
     Searches for flights where the primary flight number contains the search term.
     By default, excludes codeshare flights unless include_codeshare is True.
-    If no date specified, searches D-1, D, D+1 (3 days).
+    
+    Search range rules (HKT timezone):
+    - If date specified: search only that day
+    - 02:00-22:00 HKT: search current day only
+    - 22:00-02:00 HKT: search current day + next day (for late night flights)
 
     Args:
         api: APIClient instance
@@ -46,19 +50,32 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
     Returns:
         list: Matching flight records
     """
+    from datetime import datetime, timezone, timedelta as td
+    
     search_no = normalize_flight_number(flight_number)
     
     # If date specified, search only that day
     if date_str:
         dates_to_search = [date_str]
     else:
-        # Search D-1, D, D+1
-        today = date.today()
-        dates_to_search = [
-            (today - timedelta(days=1)).isoformat(),  # D-1
-            today.isoformat(),                         # D
-            (today + timedelta(days=1)).isoformat(),  # D+1
-        ]
+        # Get current HKT time (UTC+8)
+        hkt = timezone(td(hours=8))
+        now_hkt = datetime.now(hkt)
+        current_hour = now_hkt.hour
+        today = now_hkt.date()
+        
+        # Determine search range based on HKT time
+        # 22:00-02:00: search today + next day (late night flights)
+        # 02:00-22:00: search today only
+        if current_hour >= 22 or current_hour < 2:
+            # Late night: search today and next day
+            dates_to_search = [
+                today.isoformat(),                         # Today
+                (today + td(days=1)).isoformat(),          # Next day
+            ]
+        else:
+            # Normal hours: search today only
+            dates_to_search = [today.isoformat()]
     
     all_results = []
     seen_keys = set()
