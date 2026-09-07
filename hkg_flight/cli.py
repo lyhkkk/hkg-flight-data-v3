@@ -4,6 +4,7 @@ Command-line interface and entry point.
 """
 
 import argparse
+import re
 import sys
 import os
 import time
@@ -27,6 +28,22 @@ from .utils import (
     sort_flights,
     filter_records,
 )
+
+
+def _is_stand(query):
+    """Check if query matches stand format (e.g., R13, N30, W63)."""
+    return bool(re.fullmatch(r"[A-Z]{1,2}\d{1,2}", query.upper()))
+
+
+def _is_gate(query):
+    """Check if query matches gate format (e.g., G28, G63)."""
+    return bool(re.fullmatch(r"G\d+", query.upper()))
+
+
+def _extract_gate_number(query):
+    """Extract gate number from query (e.g., G28 -> 28)."""
+    match = re.fullmatch(r"G(\d+)", query.upper())
+    return match.group(1) if match else query
 
 
 def search_flights(api, flight_number, date_str=None, include_codeshare=False):
@@ -87,6 +104,10 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
     all_results = []
     seen_keys = set()
     
+    # Determine search mode
+    is_stand_search = _is_stand(search_no) and not _is_gate(search_no)
+    is_gate_search = _is_gate(search_no)
+    
     for d in dates_to_search:
         raw_data = api.fetch_flights(d)
         if raw_data is None:
@@ -99,12 +120,29 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
             if key in seen_keys:
                 continue
             
-            # Search primary flight number (contains match)
-            if search_no in rec.get("flight_number", ""):
-                all_results.append(rec)
-                seen_keys.add(key)
-            # Optionally search codeshare flight numbers
-            elif include_codeshare and search_no in rec.get("all_flight_numbers", ""):
+            matched = False
+            
+            if is_stand_search:
+                # Search by stand (exact match, case-insensitive)
+                rec_stand = rec.get("stand", "").upper()
+                if rec_stand == search_no.upper():
+                    matched = True
+            elif is_gate_search:
+                # Search by gate (exact match, case-insensitive)
+                # Extract number from query (e.g., G28 -> 28)
+                gate_num = _extract_gate_number(search_no)
+                rec_gate = rec.get("gate", "")
+                if rec_gate.upper() == gate_num.upper():
+                    matched = True
+            else:
+                # Search primary flight number (contains match)
+                if search_no in rec.get("flight_number", ""):
+                    matched = True
+                # Optionally search codeshare flight numbers
+                elif include_codeshare and search_no in rec.get("all_flight_numbers", ""):
+                    matched = True
+            
+            if matched:
                 all_results.append(rec)
                 seen_keys.add(key)
     
