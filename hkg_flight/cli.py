@@ -30,6 +30,9 @@ from .utils import (
 )
 
 
+DEFAULT_PAGE_SIZE = 10
+
+
 def _is_stand(query):
     """Check if query matches stand format (e.g., R13, N30, W63)."""
     return bool(re.fullmatch(r"[A-Z]{1,2}\d{1,2}", query.upper()))
@@ -38,6 +41,13 @@ def _is_stand(query):
 def _is_gate(query):
     """Check if query matches gate format (e.g., G28, G63)."""
     return bool(re.fullmatch(r"G\d+", query.upper()))
+
+
+def _is_airline_code(query):
+    """Check if query matches a 2-letter airline code (e.g., CX, HX, UO)."""
+    if not query:
+        return False
+    return bool(re.fullmatch(r"[A-Z]{2}", str(query).strip().upper()))
 
 
 def _extract_gate_number(query):
@@ -57,6 +67,12 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
     - If date specified: search only that day
     - 02:00-22:00 HKT: search current day only
     - 22:00-02:00 HKT: search current day + next day (for late night flights)
+
+    Search modes:
+    - Stand (e.g. W63): exact stand match
+    - Gate (e.g. G28): exact gate match
+    - Airline code (e.g. CX): primary airline code or flight number prefix
+    - Flight number (e.g. CX759): contains match on primary flight number
 
     Args:
         api: APIClient instance
@@ -107,6 +123,7 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
     # Determine search mode
     is_stand_search = _is_stand(search_no) and not _is_gate(search_no)
     is_gate_search = _is_gate(search_no)
+    is_airline_search = _is_airline_code(search_no) and not is_stand_search and not is_gate_search
     
     for d in dates_to_search:
         raw_data = api.fetch_flights(d)
@@ -134,6 +151,19 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
                 rec_gate = rec.get("gate", "")
                 if rec_gate.upper() == gate_num.upper():
                     matched = True
+            elif is_airline_search:
+                # Search by 2-letter airline code (e.g., CX = all Cathay flights)
+                # Match the primary airline code or the flight number prefix
+                if rec.get("airline_code", "").upper() == search_no:
+                    matched = True
+                elif rec.get("flight_number", "").startswith(search_no):
+                    matched = True
+                elif include_codeshare:
+                    # Also match codeshare flight numbers carrying this airline code
+                    for no in rec.get("all_flight_numbers", "").split("|"):
+                        if no and no.startswith(search_no):
+                            matched = True
+                            break
             else:
                 # Search primary flight number (contains match)
                 if search_no in rec.get("flight_number", ""):
@@ -299,16 +329,99 @@ def print_flight_table(records, title):
         print("\n... and {} more flights".format(len(records) - 50))
 
 
+def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE, input_func=input):
+    """
+    Display records in an interactive pager, page_size rows per page.
+
+    Navigation:
+    - Enter or 'n': next page
+    - 'p': previous page
+    - number: jump to that page
+    - 'q': quit
+
+    Args:
+        records: List of normalized flight records
+        title: Title shown above each page
+        page_size: Rows per page (default: 10)
+        input_func: Input source (injectable for testing)
+
+    Returns:
+        int: Last page displayed
+    """
+    total = len(records)
+    if total == 0:
+        print("No flights found.")
+        return 0
+
+    total_pages = (total + page_size - 1) // page_size
+    page = 1
+
+    while True:
+        start = (page - 1) * page_size
+        end = min(start + page_size, total)
+
+        print("\n{} — {} flight(s), showing {}-{}".format(title, total, start + 1, end))
+        print()
+        print("{:<6} {:<10} {:<20} {:<18} {:<12} {:<5}".format(
+            "TIME", "FLIGHT", "ROUTE", "STATUS", "GATE/STAND", "TERM"
+        ))
+        print("-" * 80)
+
+        for rec in records[start:end]:
+            print("{:<6} {:<10} {:<20} {:<18} {:<12} {:<5}".format(
+                rec.get("time", "--:--"),
+                rec.get("flight_number", "N/A"),
+                route_text(rec),
+                rec.get("status", "N/A"),
+                gate_stand_text(rec),
+                rec.get("terminal", "-") or "-",
+            ))
+
+        print("\nPage {}/{} — [Enter/N]ext [P]rev [Q]uit, or type a page number".format(
+            page, total_pages
+        ))
+
+        try:
+            choice = input_func("> ").strip().lower()
+        except (EOFError, KeyboardInterrupt, StopIteration):
+            print()
+            break
+
+        if choice in ("q", "quit", "exit"):
+            break
+        elif choice in ("n", ""):
+            page = min(page + 1, total_pages)
+        elif choice in ("p", "prev", "previous"):
+            page = max(page - 1, 1)
+        elif choice.isdigit():
+            num = int(choice)
+            if 1 <= num <= total_pages:
+                page = num
+            else:
+                print("Page number out of range (1-{})".format(total_pages))
+
+    return page
+
+
 def cmd_query(args, api):
     """Handle 'query' command."""
     results = search_flights(api, args.flight, args.date, include_codeshare=args.codeshare)
 
     if results:
-        for i, rec in enumerate(results, 1):
-            print_flight_details(rec, i)
+        if _is_airline_code(args.flight) or len(results) > DEFAULT_PAGE_SIZE:
+            # Airline code search (e.g. CX) or large result set:
+            # compact list, 10 flights per page with N/P navigation
+            paginate_records(
+                results,
+                "{} flights {}".format(args.flight.upper(), args.date or ""),
+                page_size=DEFAULT_PAGE_SIZE,
+            )
+        else:
+            for i, rec in enumerate(results, 1):
+                print_flight_details(rec, i)
     else:
         print("No flights found for '{}'".format(args.flight))
-    
+
     if not args.codeshare:
         print("\nTip: Use --codeshare to include codeshare flights")
 
@@ -433,7 +546,10 @@ def create_parser():
     
     # query command
     query_parser = subparsers.add_parser("query", help="Search for a flight by number")
-    query_parser.add_argument("flight", help="Flight number to search for")
+    query_parser.add_argument(
+        "flight",
+        help="Flight number (CX759), airline code (CX), gate (G28), or stand (W63)"
+    )
     query_parser.add_argument("date", nargs="?", default=None, help="Date in YYYY-MM-DD format (default: D-1, D, D+1)")
     query_parser.add_argument("--codeshare", action="store_true", help="Include codeshare flights")
     

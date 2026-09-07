@@ -818,6 +818,198 @@ class TestIntegration(unittest.TestCase):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+class TestAirlineCodeSearch(unittest.TestCase):
+    """Test airline code detection and search"""
+
+    def test_is_airline_code(self):
+        """Test _is_airline_code detection"""
+        from hkg_flight.cli import _is_airline_code
+        self.assertTrue(_is_airline_code("CX"))
+        self.assertTrue(_is_airline_code("cx"))
+        self.assertTrue(_is_airline_code(" HX "))
+        self.assertFalse(_is_airline_code("CX759"))
+        self.assertFalse(_is_airline_code("C"))
+        self.assertFalse(_is_airline_code("CXY"))
+        self.assertFalse(_is_airline_code("G28"))
+        self.assertFalse(_is_airline_code(""))
+        self.assertFalse(_is_airline_code(None))
+
+    def _mock_api(self, entries):
+        mock_api = MagicMock()
+        mock_api.fetch_flights.return_value = entries
+        mock_api.fetch_fvm_registrations.return_value = []
+        return mock_api
+
+    def test_search_by_airline_code(self):
+        """Test searching by 2-letter airline code matches that airline only"""
+        # Real API format: no = "CX 759" (full number), airline = "CPA" (ICAO code)
+        entries = [
+            {
+                "arrival": False, "cargo": False, "date": "2026-09-07",
+                "list": [{
+                    "flight": [{"airline": "CPA", "no": "CX 759"}],
+                    "time": "08:40", "status": "Boarding",
+                    "origin": ["HKG"], "destination": ["SIN"],
+                    "terminal": "T1", "gate": "63", "stand": "",
+                }],
+            },
+            {
+                "arrival": False, "cargo": False, "date": "2026-09-07",
+                "list": [{
+                    "flight": [{"airline": "HKE", "no": "UO 535"}],
+                    "time": "08:50", "status": "Scheduled",
+                    "origin": ["HKG"], "destination": ["BKK"],
+                    "terminal": "T1", "gate": "15", "stand": "",
+                }],
+            },
+        ]
+        result = search_flights(self._mock_api(entries), "CX", "2026-09-07")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["flight_number"], "CX759")
+        self.assertEqual(result[0]["airline_code"], "CPA")
+
+    def test_search_by_airline_code_codeshare(self):
+        """Test --codeshare includes flights carrying the airline code"""
+        entries = [
+            {
+                "arrival": False, "cargo": False, "date": "2026-09-07",
+                "list": [
+                    {
+                        "flight": [{"airline": "CPA", "no": "CX 759"}],
+                        "time": "08:40", "status": "Boarding",
+                        "origin": ["HKG"], "destination": ["SIN"],
+                        "terminal": "T1", "gate": "63", "stand": "",
+                    },
+                    {
+                        "flight": [{"airline": "EVA", "no": "BR 258"},
+                                   {"airline": "CPA", "no": "CX 4446"}],
+                        "time": "09:00", "status": "Scheduled",
+                        "origin": ["HKG"], "destination": ["TPE"],
+                        "terminal": "T1", "gate": "21", "stand": "",
+                    },
+                ],
+            },
+        ]
+        mock_api = self._mock_api(entries)
+
+        result = search_flights(mock_api, "CX", "2026-09-07")
+        numbers = sorted(r["flight_number"] for r in result)
+        self.assertEqual(numbers, ["CX759"])
+
+        result = search_flights(mock_api, "CX", "2026-09-07", include_codeshare=True)
+        numbers = sorted(r["flight_number"] for r in result)
+        self.assertEqual(numbers, ["BR258", "CX759"])
+
+    def test_search_by_airline_code_case_insensitive(self):
+        """Test lowercase airline code input is normalized"""
+        entries = [
+            {
+                "arrival": True, "cargo": False, "date": "2026-09-07",
+                "list": [{
+                    "flight": [{"airline": "CPA", "no": "CX 100"}],
+                    "time": "10:00", "status": "Landed",
+                    "origin": ["SIN"], "destination": ["HKG"],
+                    "terminal": "T1", "gate": "", "stand": "W63",
+                }],
+            },
+        ]
+        result = search_flights(self._mock_api(entries), "cx", "2026-09-07")
+        self.assertEqual(len(result), 1)
+
+
+class TestPaginateRecords(unittest.TestCase):
+    """Test paginate_records interactive pager"""
+
+    def _make_records(self, count):
+        records = []
+        for i in range(1, count + 1):
+            records.append({
+                "key": "2026-09-07_CX{}".format(i),
+                "date": "2026-09-07",
+                "time": "{:02d}:00".format(i % 24),
+                "flight_number": "CX{}".format(i),
+                "airline_code": "CX",
+                "all_flight_numbers": "CX{}".format(i),
+                "type": "departure",
+                "status": "Scheduled",
+                "terminal": "T1",
+                "gate": str(i),
+                "stand": "",
+                "origin": "",
+                "destination": "SIN",
+            })
+        return records
+
+    def _run(self, records, inputs):
+        import io
+        from contextlib import redirect_stdout
+        from hkg_flight.cli import paginate_records
+
+        buf = io.StringIO()
+        it = iter(inputs)
+        with redirect_stdout(buf):
+            last_page = paginate_records(records, "Test", page_size=10, input_func=lambda prompt: next(it))
+        return last_page, buf.getvalue()
+
+    def test_quit_immediately(self):
+        """Test pager quits on 'q' and shows only page 1"""
+        records = self._make_records(25)
+        last_page, output = self._run(records, ["q"])
+        self.assertEqual(last_page, 1)
+        self.assertIn("25 flight(s), showing 1-10", output)
+        self.assertIn("Page 1/3", output)
+        self.assertIn("CX1", output)
+        self.assertNotIn("CX11", output)
+
+    def test_next_page(self):
+        """Test Enter/'n' advances to the next page"""
+        records = self._make_records(25)
+        last_page, output = self._run(records, ["n", "q"])
+        self.assertEqual(last_page, 2)
+        self.assertIn("showing 11-20", output)
+        self.assertIn("CX11", output)
+        self.assertNotIn("CX21", output)
+
+    def test_previous_page(self):
+        """Test 'p' goes back and never below page 1"""
+        records = self._make_records(25)
+        last_page, output = self._run(records, ["n", "n", "p", "p", "p", "q"])
+        self.assertEqual(last_page, 1)
+
+    def test_jump_to_page(self):
+        """Test typing a page number jumps directly to it"""
+        records = self._make_records(25)
+        last_page, output = self._run(records, ["3", "q"])
+        self.assertEqual(last_page, 3)
+        self.assertIn("showing 21-25", output)
+        self.assertIn("CX25", output)
+
+    def test_jump_out_of_range(self):
+        """Test out-of-range page number is rejected"""
+        records = self._make_records(25)
+        last_page, output = self._run(records, ["9", "q"])
+        self.assertEqual(last_page, 1)
+        self.assertIn("out of range", output)
+
+    def test_next_stops_at_last_page(self):
+        """Test next page clamps at the last page"""
+        records = self._make_records(25)
+        last_page, output = self._run(records, ["n", "n", "n", "q"])
+        self.assertEqual(last_page, 3)
+
+    def test_partial_last_page(self):
+        """Test last page shows remaining rows only"""
+        records = self._make_records(25)
+        last_page, output = self._run(records, ["3"])
+        self.assertIn("showing 21-25", output)
+
+    def test_empty_records(self):
+        """Test pager handles empty record list"""
+        last_page, output = self._run([], ["q"])
+        self.assertEqual(last_page, 0)
+        self.assertIn("No flights found", output)
+
+
 if __name__ == "__main__":
     # Run tests with verbose output
     unittest.main(verbosity=2)

@@ -41,6 +41,9 @@ python -m hkg_flight query CX759
 # Search for a flight on a specific date
 python -m hkg_flight query CX759 2026-08-16
 
+# Search by airline code (2 letters) — all CX flights
+python -m hkg_flight query CX
+
 # Search including codeshare flights
 python -m hkg_flight query 30 --codeshare
 
@@ -67,6 +70,18 @@ python -m hkg_flight clear-cache --yes  # Skip confirmation
 
 Dates use `YYYY-MM-DD` format. If no date is given for `query`, it searches D-1, D, and D+1.
 If no date is given for `departures` / `arrivals`, the current date is used.
+
+### Query output & pagination
+
+When a query matches an airline code (e.g. `query CX`) or returns more than 10
+flights, results are shown as a compact list with **10 flights per page**:
+
+| Key / Input | Action |
+| --- | --- |
+| `Enter` / `n` | Next page |
+| `p` | Previous page |
+| `1`-`9`... | Jump to page number |
+| `q` | Quit the pager |
 
 ## TUI Controls
 
@@ -128,4 +143,4 @@ Run the test suite:
 python -m unittest test_hkg_flight
 ```
 
-All 58 tests should pass.
+All 70 tests should pass.
