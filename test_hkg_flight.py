@@ -1156,6 +1156,30 @@ class TestSearchModeDetection(unittest.TestCase):
         for query in ("W63", "N30", "R13", "S12", "E5", "D305", "X7"):
             self.assertTrue(_is_stand(query), query)
 
+    def test_specialized_query_falls_back_to_flight_number(self):
+        """An unmatched stand-shaped query is retried as a flight number."""
+        entries = [{
+            "arrival": False,
+            "cargo": False,
+            "date": "2026-09-07",
+            "list": [{
+                "flight": [{"airline": "D7", "no": "D7"}],
+                "time": "08:40",
+                "status": "Scheduled",
+                "origin": ["HKG"],
+                "destination": ["SIN"],
+                "terminal": "T1",
+                "gate": "",
+                "stand": "",
+            }],
+        }]
+        api = MagicMock()
+        api.fetch_flights.return_value = entries
+
+        result = search_flights(api, "D7", "2026-09-07")
+
+        self.assertEqual([r["flight_number"] for r in result], ["D7"])
+
     def test_short_flight_number_search_returns_matching_record(self):
         """Searching a short flight number must not silently return zero results."""
         entries = []

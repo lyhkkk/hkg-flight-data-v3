@@ -278,6 +278,10 @@ hkg-flight-data-v3/
 
 The package is standard-library-only and can be run directly from a checkout with `python -m hkg_flight`. The diagram above describes logical components; the implementation is split across the modules under `hkg_flight/`.
 
+`state.json` is reserved for the documented flight-state snapshot contract. The
+current poller compares its in-memory records during a process lifetime; using
+that cache for cross-restart change detection remains a separate future task.
+
 ## 9. Dependencies
 
 - Python 3.7+ (standard library only)

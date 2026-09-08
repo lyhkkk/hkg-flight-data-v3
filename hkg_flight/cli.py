@@ -113,6 +113,7 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
             dates_to_search = [today.isoformat()]  # Today (D)
     
     all_results = []
+    all_records = []
     seen_keys = set()
     
     # Determine search mode
@@ -126,6 +127,7 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
             continue
         
         records = normalize_flights(raw_data)
+        all_records.extend(records)
         
         for rec in records:
             key = rec.get("key", "")
@@ -171,6 +173,24 @@ def search_flights(api, flight_number, date_str=None, include_codeshare=False):
                 all_results.append(rec)
                 seen_keys.add(key)
     
+    # An input such as D7 can be either a stand or a short flight number.
+    # Never silently hide a flight when the specialized search found nothing.
+    if not all_results and (is_stand_search or is_gate_search):
+        fallback_term = search_no
+        fallback_results = []
+        fallback_seen = set()
+        for rec in all_records:
+            key = rec.get("key", "")
+            if key in fallback_seen:
+                continue
+            if fallback_term in rec.get("flight_number", ""):
+                fallback_results.append(rec)
+                fallback_seen.add(key)
+            elif include_codeshare and fallback_term in rec.get("all_flight_numbers", ""):
+                fallback_results.append(rec)
+                fallback_seen.add(key)
+        all_results = fallback_results
+
     # Sort by date and time
     all_results.sort(key=lambda r: (r.get("date", ""), r.get("time", "")))
     
