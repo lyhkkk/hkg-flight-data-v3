@@ -6,7 +6,7 @@ Terminal User Interface using curses.
 import sys
 import os
 
-from .utils import route_text, gate_stand_text, today_str
+from .utils import gate_stand_text, route_text, status_pair, today_str
 
 
 def _enable_ansi_windows():
@@ -20,8 +20,20 @@ def _enable_ansi_windows():
             pass
 
 
-def _colored(text, ansi_code):
-    """Add ANSI color codes."""
+def _colors_enabled(stream=None):
+    """Return whether ANSI color output is appropriate for the stream."""
+    if "NO_COLOR" in os.environ:
+        return False
+    stream = stream or sys.stdout
+    return bool(getattr(stream, "isatty", lambda: False)())
+
+
+def _colored(text, ansi_code, enabled=None):
+    """Add ANSI color codes when output is an interactive terminal."""
+    if enabled is None:
+        enabled = _colors_enabled()
+    if not enabled:
+        return str(text)
     return "\033[{}m{}\033[0m".format(ansi_code, text)
 
 
@@ -48,6 +60,7 @@ def run_simple_tui(poller, api, alert_manager, web_server):
     Simple TUI that works without curses.
     """
     _enable_ansi_windows()
+    colors_enabled = _colors_enabled()
 
     mode = "departures"
     page = 0
@@ -83,15 +96,15 @@ def run_simple_tui(poller, api, alert_manager, web_server):
         clear()
 
         # Header
-        print(_colored("=" * 80, "1;33"))
-        print(_colored("  HKG Flight Data - {}".format(today_str()), "1;33"))
-        print(_colored("=" * 80, "1;33"))
+        print(_colored("=" * 80, "1;33", colors_enabled))
+        print(_colored("  HKG Flight Data - {}".format(today_str()), "1;33", colors_enabled))
+        print(_colored("=" * 80, "1;33", colors_enabled))
         print()
 
         if mode == "alerts":
             # Show alerts
             active = alert_manager.get_active() if alert_manager else []
-            print(_colored("  Active Alerts: {}".format(len(active)), "1;31"))
+            print(_colored("  Active Alerts: {}".format(len(active)), "1;31", colors_enabled))
             print()
             for alert in active[:20]:
                 field = alert.get("field", "?")
@@ -107,7 +120,7 @@ def run_simple_tui(poller, api, alert_manager, web_server):
         elif mode == "airlines":
             # Show airlines
             airlines = api.fetch_airlines()
-            print(_colored("  Airlines: {}".format(len(airlines)), "1;36"))
+            print(_colored("  Airlines: {}".format(len(airlines)), "1;36", colors_enabled))
             print()
             for airline in airlines[:20]:
                 code = airline.get("code", "?")
@@ -155,13 +168,13 @@ def run_simple_tui(poller, api, alert_manager, web_server):
                 # Color by status
                 status_cat = rec.get("status_category", "scheduled")
                 if status_cat == "boarding":
-                    status_str = _colored(status, "32")  # Green
+                    status_str = _colored(status, "32", colors_enabled)  # Green
                 elif status_cat == "departed":
-                    status_str = _colored(status, "32;2")  # Dim green
+                    status_str = _colored(status, "32;2", colors_enabled)  # Dim green
                 elif status_cat == "cancelled":
-                    status_str = _colored(status, "31")  # Red
+                    status_str = _colored(status, "31", colors_enabled)  # Red
                 elif status_cat == "delayed":
-                    status_str = _colored(status, "33")  # Yellow
+                    status_str = _colored(status, "33", colors_enabled)  # Yellow
                 else:
                     status_str = status
 
@@ -404,16 +417,14 @@ class CursesTUI(object):
             gs = gate_stand_text(rec)
             term = rec.get("terminal", "-")
 
-            # Color by status
+            # Color by status. Keep the category-to-pair mapping in utils.py.
             status_cat = rec.get("status_category", "scheduled")
-            if status_cat == "boarding":
-                attr = curses.color_pair(2)
-            elif status_cat == "departed":
-                attr = curses.color_pair(2) | curses.A_DIM
-            elif status_cat in ("cancelled", "delayed"):
-                attr = curses.color_pair(3)
-            else:
-                attr = curses.color_pair(5)
+            pair_id = status_pair(status_cat)
+            if pair_id == 0:
+                pair_id = 5
+            attr = curses.color_pair(pair_id)
+            if status_cat in ("departed", "landed"):
+                attr |= curses.A_DIM
 
             line = "{:<6} {:<10} {:<6} {:<20} {:<18} {:<12} {:<5}".format(
                 time_str, flight, reg, route, status, gs, term

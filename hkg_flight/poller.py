@@ -47,11 +47,15 @@ class Poller(object):
         log("Poller started")
 
     def stop(self):
-        """Stop the background poller."""
+        """Stop the background poller and report if it did not terminate."""
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                log("Poller did not stop within 5 seconds")
+                return False
         log("Poller stopped")
+        return True
 
     def _run(self):
         """Main polling loop."""

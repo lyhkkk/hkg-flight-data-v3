@@ -1,13 +1,14 @@
 # HKG Flight Data v3 - Test Suite
 # Tests for core functionality
 
+import importlib.util
 import os
 import sys
 import time
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -59,6 +60,21 @@ class FakeCursesScreen:
 
     def refresh(self):
         pass
+
+
+class TestSimpleTUIColor(unittest.TestCase):
+    """Test ANSI color output respects terminal and NO_COLOR state."""
+
+    def test_colors_are_plain_for_non_tty(self):
+        from hkg_flight.tui import _colored
+
+        self.assertEqual(_colored("hello", "31", enabled=False), "hello")
+
+    def test_no_color_environment_disables_colors(self):
+        from hkg_flight.tui import _colors_enabled
+
+        with patch.dict(os.environ, {"NO_COLOR": "1"}):
+            self.assertFalse(_colors_enabled())
 
 
 class TestUtilityFunctions(unittest.TestCase):
@@ -175,10 +191,12 @@ class TestUtilityFunctions(unittest.TestCase):
         self.assertIn("cancel", cat.lower())
 
     def test_status_pair(self):
-        """Test status pair generation"""
-        result = status_pair("scheduled")
-        # Returns a value (may be int or tuple depending on implementation)
-        self.assertIsNotNone(result)
+        """Test status categories map to the TUI color-pair contract."""
+        self.assertEqual(status_pair("scheduled"), 5)
+        self.assertEqual(status_pair("boarding"), 2)
+        self.assertEqual(status_pair("departed"), 2)
+        self.assertEqual(status_pair("cancelled"), 3)
+        self.assertEqual(status_pair("unknown"), 0)
 
 
 class TestCacheSystem(unittest.TestCase):
@@ -687,6 +705,15 @@ class TestAPIClient(unittest.TestCase):
         self.assertEqual(client.fetch_airlines(), fresh)
         self.assertEqual(self.cache.read_airlines(), fresh)
 
+    def test_bypass_cache_does_not_fallback_to_airline_cache_on_failure(self):
+        """Test force mode returns empty data rather than stale airline metadata."""
+        cached = [{"code": "CX", "name": "Cached"}]
+        self.cache.write_airlines(cached)
+        client = APIClient(cache=self.cache, bypass_cache=True)
+        client._request_json = MagicMock(return_value=None)
+
+        self.assertEqual(client.fetch_airlines(), [])
+
     def test_invalid_flight_date_is_rejected(self):
         """Test invalid dates never reach the HTTP request."""
         client = APIClient(cache=self.cache)
@@ -718,7 +745,7 @@ class TestPoller(unittest.TestCase):
         poller.start()
         try:
             started = poller._thread
-            poller.stop()
+            self.assertTrue(poller.stop())
             self.assertFalse(started.is_alive())
         finally:
             poller.stop()
@@ -795,6 +822,10 @@ class TestWebServer(unittest.TestCase):
             self.server.stop()
 
 
+_CURSES_AVAILABLE = importlib.util.find_spec("_curses") is not None
+
+
+@unittest.skipUnless(_CURSES_AVAILABLE, "requires curses")
 class TestCursesTUI(unittest.TestCase):
     """Test curses TUI mode dispatch and filter input."""
 

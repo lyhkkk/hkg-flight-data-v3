@@ -134,18 +134,18 @@ def status_pair(category):
     """Return curses color pair id and icon for status category."""
     # Returns a simple identifier for color mapping
     status_map = {
-        "scheduled": 0,
+        "scheduled": 5,
         "gate_closed": 1,
-        "boarding_soon": 2,
-        "final_call": 3,
-        "boarding": 4,
-        "departed": 5,
+        "boarding_soon": 4,
+        "final_call": 4,
+        "boarding": 2,
+        "departed": 2,
         "estimated": 1,
-        "delayed": 6,
-        "landed": 5,
-        "at_gate": 4,
-        "taxiing": 4,
-        "cancelled": 6,
+        "delayed": 3,
+        "landed": 2,
+        "at_gate": 2,
+        "taxiing": 2,
+        "cancelled": 3,
     }
     return status_map.get(category, 0)
 

@@ -118,7 +118,9 @@ into the filter. In the curses TUI, other printable characters are appended to
 this filter; Backspace removes the last character and Escape clears it.
 
 In terminals without curses support, a simpler text menu is used; follow the
-on-screen prompts.
+on-screen prompts. The simple TUI emits ANSI colors only to an interactive
+terminal. Set `NO_COLOR` to disable ANSI color output explicitly, including when
+output is redirected.
 
 ## Web Dashboard
 
@@ -143,7 +145,9 @@ Press `Ctrl+C` in the terminal to stop the web server.
 
 Flight data is cached under `~/.hkg_flight_cache/`. The cache is used as a
 fallback when the live HKIA API is unavailable, and it stores alert state and
-polling history.
+polling history. The global `--force` option bypasses cached airline metadata
+for that run; it does not delete cache files, and polling may still fall back
+to cached flight data when the API is unavailable.
 
 ## Verification
 
@@ -153,4 +157,4 @@ Run the test suite:
 python -m unittest test_hkg_flight
 ```
 
-All 82 tests should pass.
+Run the full test suite and confirm that all collected tests pass; CI is the authoritative cross-platform result.

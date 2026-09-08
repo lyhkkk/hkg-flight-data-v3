@@ -62,7 +62,7 @@ python -m hkg_flight web -p 9000
 | 选项 | 说明 |
 |------|------|
 | `--cache-dir DIR` | 自定义缓存目录（默认：`~/.hkg_flight_cache`） |
-| `--force` | 本次运行绕过可用的缓存读取，不删除缓存文件 |
+| `--force` | 本次运行绕过航司缓存读取，不删除缓存文件 |
 | `--help`, `-h` | 显示帮助信息 |
 
 ### 子命令选项
@@ -111,18 +111,18 @@ python -m hkg_flight web -p 9000
 使用 `--force` 选项：
 
 ```bash
-# 强制刷新（绕过缓存直连 API）并显示离境航班
+# 绕过航司缓存并显示离境航班
 python -m hkg_flight --force departures
 
-# 强制刷新并查询航班
+# 绕过航司缓存并查询航班
 python -m hkg_flight --force query CX759
 
-# 强制刷新并启动 Web 服务器（注意：--force 是全局选项，须写在子命令之前）
+# 绕过航司缓存并启动 Web 服务器（注意：--force 是全局选项，须写在子命令之前）
 python -m hkg_flight --force web
 ```
 
 注意：`--force` 是全局选项，必须写在子命令之前（`--force web`，而非 `web --force`）。
-`--force` 只对本次运行绕过缓存读取，不会删除缓存文件（包括 alerts.json 告警历史）。
+`--force` 只对本次运行绕过航司缓存读取；航班请求本身直接访问 API，轮询失败时仍可使用航班缓存。它不会删除缓存文件（包括 alerts.json 告警历史）。
 
 或者清除特定日期的缓存：
 
@@ -156,7 +156,7 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Custom cache directory (default: ~/.hkg_flight_cache)
-  --force               Bypass cached data (fetch fresh from the API)
+  --force               Bypass cached airline data for this run
 ```
 
 ---

@@ -532,7 +532,7 @@ def create_parser():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Bypass cached data (fetch fresh from the API)"
+        help="Bypass cached airline data for this run"
     )
     
     # Subcommands
