@@ -66,6 +66,11 @@ Each flight object in `list`:
 - `baggage` (string): belt number (arrivals)
 - `stand` (string): parking stand (arrivals)
 
+Stand search in CLI query mode accepts HKIA stand identifiers with prefixes
+`W`, `N`, `R`, `S`, `E`, `D`, or `X` followed by 1–3 digits. This prevents
+short airline flight numbers such as `BA15` or `SQ2` from being classified as
+stands.
+
 ### 3.3 Polite Rate Limiting
 
 - Minimum interval between API calls: **0.6 seconds** (reference uses 0.5s)

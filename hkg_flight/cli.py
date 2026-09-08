@@ -27,8 +27,10 @@ DEFAULT_PAGE_SIZE = 10
 
 
 def _is_stand(query):
-    """Check if query matches stand format (e.g., R13, N30, W63)."""
-    return bool(re.fullmatch(r"[A-Z]{1,2}\d{1,2}", query.upper()))
+    """Check if query matches a supported HKIA stand identifier."""
+    if not query:
+        return False
+    return bool(re.fullmatch(r"[WNRSEDX]\d{1,3}", str(query).strip().upper()))
 
 
 def _is_gate(query):

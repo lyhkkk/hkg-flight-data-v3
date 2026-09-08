@@ -9,6 +9,8 @@
 python -m hkg_flight query <航班号> [日期]
 python -m hkg_flight query CX759
 python -m hkg_flight query CX759 2026-09-07
+python -m hkg_flight query BA15       # 短航班号按航班号匹配
+python -m hkg_flight query W63        # 查询停机位
 
 # 包含代码共享航班
 python -m hkg_flight query <航班号> --codeshare
@@ -235,6 +237,8 @@ options:
 | `query 888` | 主航班号包含 "888" |
 | `query CX888` | 主航班号包含 "CX888" |
 | `query CX888 --codeshare` | 主航班号或代码共享包含 "CX888" |
+| `query BA15` | 短航班号按主航班号匹配，不会误判为停机位 |
+| `query W63` | 按 HKIA 停机位精确匹配（支持 W/N/R/S/E/D/X 前缀） |
 | `query CX888 2026-09-07` | 主航班号包含 "CX888"，仅该日期 |
 | `query CX` | 航空公司代码（2 字母）：主航班号前缀匹配（如 CX759） |
 | `query CX --codeshare` | 航司代码前缀 + 搭载该代码的代码共享航班（如 BR258 带 CX4446） |

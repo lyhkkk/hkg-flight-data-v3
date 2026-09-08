@@ -1108,6 +1108,50 @@ class TestAirlineCodeSearch(unittest.TestCase):
         self.assertEqual(len(result), 1)
 
 
+class TestSearchModeDetection(unittest.TestCase):
+    """Test that short flight numbers are distinct from stand identifiers."""
+
+    def test_short_flight_numbers_are_not_stands(self):
+        """Two-letter airline prefixes must not be interpreted as stands."""
+        from hkg_flight.cli import _is_stand
+
+        for query in ("BA15", "KA21", "HX22", "UO23", "SQ2", "JL26"):
+            self.assertFalse(_is_stand(query), query)
+
+    def test_hkia_stand_formats_are_recognized(self):
+        """Recognize supported HKIA stand prefixes without broad matching."""
+        from hkg_flight.cli import _is_stand
+
+        for query in ("W63", "N30", "R13", "S12", "E5", "D305", "X7"):
+            self.assertTrue(_is_stand(query), query)
+
+    def test_short_flight_number_search_returns_matching_record(self):
+        """Searching a short flight number must not silently return zero results."""
+        entries = []
+        for number in ("BA15", "KA21", "HX22", "UO23", "SQ2", "JL26"):
+            entries.append({
+                "arrival": False,
+                "cargo": False,
+                "date": "2026-09-07",
+                "list": [{
+                    "flight": [{"airline": number[:2], "no": number}],
+                    "time": "08:40",
+                    "status": "Scheduled",
+                    "origin": ["HKG"],
+                    "destination": ["SIN"],
+                    "terminal": "T1",
+                    "gate": "",
+                    "stand": "",
+                }],
+            })
+
+        api = MagicMock()
+        api.fetch_flights.return_value = entries
+        for number in ("BA15", "KA21", "HX22", "UO23", "SQ2", "JL26"):
+            result = search_flights(api, number, "2026-09-07")
+            self.assertEqual([r["flight_number"] for r in result], [number])
+
+
 class TestPaginateRecords(unittest.TestCase):
     """Test paginate_records interactive pager"""
 

@@ -44,6 +44,13 @@ python -m hkg_flight query CX759 2026-08-16
 # Search by airline code (2 letters) — all CX flights
 python -m hkg_flight query CX
 
+# Search by gate or HKIA stand (stand prefixes: W/N/R/S/E/D/X)
+python -m hkg_flight query G28
+python -m hkg_flight query W63
+
+# Short flight numbers such as BA15 are treated as flight numbers
+python -m hkg_flight query BA15
+
 # Search including codeshare flights
 python -m hkg_flight query 30 --codeshare
 
