@@ -585,10 +585,11 @@ def main(argv=None):
     api = APIClient(cache=cache)
     alert_manager = AlertManager(cache=cache)
     
-    # Force refresh: bypass cached data for this run (cache files untouched)
+    # Force mode bypasses airline metadata cache for this run; flight requests
+    # already call the API directly and poller fallback remains available.
     if args.force:
         api.bypass_cache = True
-        print("Force refresh: bypassing cache for this run")
+        print("Force mode: bypassing cached airline data for this run")
     
     # Handle commands
     if args.command == "query":
