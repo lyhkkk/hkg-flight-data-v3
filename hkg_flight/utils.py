@@ -3,13 +3,21 @@ HKG Flight Data v3 - Utilities Module
 Helper functions for flight data processing.
 """
 
-from datetime import date
+from datetime import date, datetime
+import re
 import sys
 
 
 def today_str():
     """Return today's date as YYYY-MM-DD."""
     return date.today().isoformat()
+
+
+def validate_date(date_str):
+    """Validate date string format (YYYY-MM-DD). Returns True if valid."""
+    if not isinstance(date_str, str):
+        return False
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str))
 
 
 def normalize_flight_number(no):
@@ -68,7 +76,7 @@ def format_raw_time(value):
 
 def log(msg):
     """Timestamped stderr log."""
-    ts = date.today().isoformat()
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print("[hkg_flight] {} {}".format(ts, msg), file=sys.stderr)
 
 

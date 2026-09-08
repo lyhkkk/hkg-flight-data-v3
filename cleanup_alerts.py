@@ -1,7 +1,6 @@
 # HKG Flight Data v3 - Alert Cleanup Script
 # Removes old and invalid alerts from the cache
 
-import json
 import os
 import sys
 from datetime import datetime, timedelta
@@ -46,7 +45,6 @@ def cleanup_alerts(cache_dir=DEFAULT_CACHE_DIR, days_old=7, dry_run=True):
     
     for alert in active:
         alert_date = alert.get("date", "")
-        raised_at = alert.get("raised_at", "")
         
         # Remove if:
         # 1. Alert date is older than cutoff

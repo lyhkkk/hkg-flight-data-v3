@@ -61,7 +61,7 @@ export HKG_API_INTERVAL=1.0
   <Actions>
     <Exec>
       <Command>python</Command>
-      <Arguments>-m hkg_flight --web --port 8080</Arguments>
+      <Arguments>-m hkg_flight web --port 8080</Arguments>
       <WorkingDirectory>O:\lyh\Projects\hkia\hkg-flight-data-v3</WorkingDirectory>
     </Exec>
   </Actions>
@@ -79,7 +79,7 @@ After=network.target
 Type=simple
 User=youruser
 WorkingDirectory=/path/to/hkg-flight-data-v3
-ExecStart=/usr/bin/python3 -m hkg_flight --web --port 8080
+ExecStart=/usr/bin/python3 -m hkg_flight web --port 8080
 Restart=on-failure
 RestartSec=30
 Environment=HKG_CACHE_DIR=/var/cache/hkg-flight

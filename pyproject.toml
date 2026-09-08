@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hkg-flight-data"
+version = "3.0.0"
+description = "Flight information retrieval tools for Hong Kong International Airport"
+readme = "README.md"
+requires-python = ">=3.7"
+license = { text = "MIT" }
+authors = [
+  { name = "HKG Flight Data Team" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.7",
+  "Environment :: Console",
+  "Topic :: Internet",
+]
+
+[project.scripts]
+hkg-flight = "hkg_flight.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hkg_flight*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py37"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E501"]

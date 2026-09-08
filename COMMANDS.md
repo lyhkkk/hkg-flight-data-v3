@@ -60,7 +60,7 @@ python -m hkg_flight web -p 9000
 | 选项 | 说明 |
 |------|------|
 | `--cache-dir DIR` | 自定义缓存目录（默认：`~/.hkg_flight_cache`） |
-| `--force` | 强制刷新（清除缓存后重新获取） |
+| `--force` | 本次运行绕过可用的缓存读取，不删除缓存文件 |
 | `--help`, `-h` | 显示帮助信息 |
 
 ### 子命令选项
@@ -109,15 +109,18 @@ python -m hkg_flight web -p 9000
 使用 `--force` 选项：
 
 ```bash
-# 强制刷新并显示离境航班
+# 强制刷新（绕过缓存直连 API）并显示离境航班
 python -m hkg_flight --force departures
 
 # 强制刷新并查询航班
 python -m hkg_flight --force query CX759
 
-# 强制刷新并启动 Web 服务器
-python -m hkg_flight web --force
+# 强制刷新并启动 Web 服务器（注意：--force 是全局选项，须写在子命令之前）
+python -m hkg_flight --force web
 ```
+
+注意：`--force` 是全局选项，必须写在子命令之前（`--force web`，而非 `web --force`）。
+`--force` 只对本次运行绕过缓存读取，不会删除缓存文件（包括 alerts.json 告警历史）。
 
 或者清除特定日期的缓存：
 
@@ -151,7 +154,7 @@ options:
   -h, --help            show this help message and exit
   --cache-dir CACHE_DIR
                         Custom cache directory (default: ~/.hkg_flight_cache)
-  --force               Force refresh (clear cache before fetching)
+  --force               Bypass cached data (fetch fresh from the API)
 ```
 
 ---
@@ -168,7 +171,6 @@ options:
 | `/api/alerts` | GET | 获取活跃告警 |
 | `/api/stats` | GET | 获取服务器统计 |
 | `/api/airlines` | GET | 获取航空公司列表 |
-| `/api/stream` | GET | SSE 实时更新流 |
 
 ---
 

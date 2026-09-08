@@ -3,8 +3,12 @@ HKG Flight Data v3 - Alert Manager Module
 Manages flight alerts (gate/stand changes).
 """
 
+import copy
 import threading
 from datetime import datetime
+
+
+MAX_HISTORY = 500
 
 
 class AlertManager(object):
@@ -14,7 +18,7 @@ class AlertManager(object):
 
     def __init__(self, cache=None):
         self.cache = cache
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self._alerts = {"active": [], "history": [], "new_flag": False}
         if cache is not None:
             self._alerts = cache.read_alerts()
@@ -22,27 +26,35 @@ class AlertManager(object):
                 self._alerts["new_flag"] = False
 
     def save(self):
-        """Persist alerts to cache."""
-        if self.cache is not None:
-            self.cache.write_alerts(self._alerts)
+        """Persist alerts to cache, retaining only recent history."""
+        with self.lock:
+            history = self._alerts.setdefault("history", [])
+            if len(history) > MAX_HISTORY:
+                del history[:-MAX_HISTORY]
+            if self.cache is not None:
+                self.cache.write_alerts(self._alerts)
 
     def active_count(self):
         """Return number of active alerts."""
-        return len(self._alerts.get("active", []))
+        with self.lock:
+            return len(self._alerts.get("active", []))
 
     def get_active(self):
-        """Return list of active alerts."""
-        return self._alerts.get("active", [])
+        """Return a copy of the active alerts."""
+        with self.lock:
+            return copy.deepcopy(self._alerts.get("active", []))
 
     def get_history(self):
-        """Return list of historical alerts."""
-        return self._alerts.get("history", [])
+        """Return a copy of the historical alerts."""
+        with self.lock:
+            return copy.deepcopy(self._alerts.get("history", []))
 
     def consume_new_flag(self):
         """Consume and return the new alert flag."""
-        flag = self._alerts.get("new_flag", False)
-        self._alerts["new_flag"] = False
-        return flag
+        with self.lock:
+            flag = self._alerts.get("new_flag", False)
+            self._alerts["new_flag"] = False
+            return flag
 
     def process_flight(self, old, new):
         """
@@ -122,7 +134,6 @@ class AlertManager(object):
             active = self._alerts.get("active", [])
             to_remove = [a for a in active if a.get("key") == key]
             if to_remove:
-                for alert in to_remove:
-                    active.remove(alert)
-                    self._alerts.setdefault("history", []).append(alert)
+                self._alerts["active"] = [a for a in active if a.get("key") != key]
+                self._alerts.setdefault("history", []).extend(to_remove)
                 self.save()

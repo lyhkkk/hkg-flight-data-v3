@@ -1,6 +1,6 @@
 """
 HKG Flight Data v3
-A single-file flight information retrieval system for Hong Kong International Airport (HKIA).
+A modular flight information retrieval system for Hong Kong International Airport (HKIA).
 
 This package provides:
 - Flight data polling from HKIA API
@@ -11,7 +11,7 @@ This package provides:
 
 Usage:
     python -m hkg_flight                  # Start TUI
-    python -m hkg_flight --web            # Start web server
+    python -m hkg_flight web              # Start web server
     python -m hkg_flight query CX759      # Search flight
     python -m hkg_flight departures       # Today's departures
     python -m hkg_flight arrivals         # Today's arrivals

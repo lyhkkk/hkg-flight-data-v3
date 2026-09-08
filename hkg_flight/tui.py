@@ -5,10 +5,8 @@ Terminal User Interface using curses.
 
 import sys
 import os
-import time
-import threading
 
-from .utils import log, route_text, gate_stand_text, today_str, get_status_info
+from .utils import route_text, gate_stand_text, today_str
 
 
 def _enable_ansi_windows():
@@ -129,7 +127,6 @@ def run_simple_tui(poller, api, alert_manager, web_server):
                 if poller:
                     poller.refresh_today()
                     flights = poller.today_records
-                mode_text = " {} | Loading... ".format(mode.capitalize())
             pages = max(1, (len(flights) + 19) // 20)
             page = max(0, min(page, pages - 1))
 
@@ -229,18 +226,6 @@ def _setup_curses_colors(stdscr):
         pass
 
 
-def _attr(pair_id, dim=False):
-    """Get curses attribute."""
-    try:
-        import curses
-        attr = curses.color_pair(pair_id)
-        if dim:
-            attr |= curses.A_DIM
-        return attr
-    except Exception:
-        return 0
-
-
 class CursesTUI(object):
     """Full curses-based TUI."""
 
@@ -252,7 +237,6 @@ class CursesTUI(object):
         self.web_server = web_server
         self.mode = "departures"
         self.page = 0
-        self.scroll = 0
         self.filter_text = ""
         self.today_records = []
 
@@ -502,13 +486,6 @@ class CursesTUI(object):
             self.filter_text = text
         self.load_view()
 
-    def cmd_date(self):
-        """View flights by date."""
-        text = self.prompt("Date (YYYY-MM-DD): ")
-        if text:
-            # Could implement date-specific view here
-            pass
-
     def cmd_alerts(self):
         """Show alerts view."""
         self.mode = "alerts"
@@ -534,7 +511,6 @@ class CursesTUI(object):
         """Set current view mode."""
         self.mode = mode
         self.page = 0
-        self.scroll = 0
 
     def handle_key(self, ch):
         """Handle key press."""
@@ -557,7 +533,7 @@ class CursesTUI(object):
         elif ch in (ord("w"), ord("W")):
             self.cmd_web()
 
-        elif ch == 27 or ch in (ord("0"),):  # Escape
+        elif ch == 27:  # Escape clears the filter
             self.filter_text = ""
 
         elif ch == curses.KEY_LEFT:
@@ -566,24 +542,15 @@ class CursesTUI(object):
         elif ch == curses.KEY_RIGHT:
             if self.page < self.page_count() - 1:
                 self.page += 1
-        elif ch == curses.KEY_UP:
-            if self.scroll > 0:
-                self.scroll -= 1
-        elif ch == curses.KEY_DOWN:
-            self.scroll += 1
         elif ch == curses.KEY_HOME:
             self.page = 0
         elif ch == curses.KEY_END:
             self.page = self.page_count() - 1
 
-        elif ch == 27:  # Escape
-            self.filter_text = ""
-        elif ch == -1:
-            pass
-        elif 32 <= ch < 127:  # Printable characters
-            self.filter_text += chr(ch)
         elif ch == curses.KEY_BACKSPACE or ch == 127 or ch == 8:
             self.filter_text = self.filter_text[:-1]
+        elif 32 <= ch < 127:  # Printable characters append to filter
+            self.filter_text += chr(ch)
 
         self.render()
 

@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HKG Flight Data v3 — 代码审查报告 v3</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c232c; --border:rgba(255,255,255,.09);
+  --text:#e6edf3; --muted:#8b98a9; --accent:#faa718;
+  --ok:#4ade80; --warn:#f59e0b; --bad:#ef4444; --info:#58a6ff;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;padding:32px 20px 80px}
+.wrap{max-width:1080px;margin:0 auto}
+header{border-bottom:1px solid var(--border);padding-bottom:24px;margin-bottom:28px}
+h1{font-size:1.85rem;letter-spacing:-.02em}
+h1 span{color:var(--accent)}
+.sub{color:var(--muted);font-size:.88rem;margin-top:8px;font-family:var(--mono)}
+h2{font-size:1.22rem;margin:40px 0 14px;padding-left:12px;border-left:3px solid var(--accent)}
+h2.ok{border-left-color:var(--ok)} h2.new{border-left-color:var(--warn)} h2.todo{border-left-color:var(--bad)}
+p{margin:10px 0;color:#c9d4e0}
+
+.delta{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:22px 0}
+.d{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.d .t{font-size:.78rem;color:var(--muted);letter-spacing:.05em}
+.d .n{font-size:1.5rem;font-weight:700;font-family:var(--mono);margin-top:4px}
+.d .n small{font-size:.85rem;font-weight:400;color:var(--muted)}
+.up{color:var(--ok)} .mid{color:var(--warn)} .down{color:var(--bad)}
+
+table{width:100%;border-collapse:collapse;font-size:.87rem;margin:14px 0}
+th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--accent);font-weight:600;background:var(--panel2)}
+code{font-family:var(--mono);font-size:.82rem;background:var(--panel2);padding:1px 5px;border-radius:3px}
+td code{background:rgba(255,255,255,.05)}
+
+.f{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:15px 18px;margin:12px 0}
+.f.fix{border-left:3px solid var(--ok)} .f.new{border-left:3px solid var(--warn)} .f.todo{border-left:3px solid var(--bad)}
+.f h4{font-size:.98rem;display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px}
+.badge{font-size:.68rem;font-family:var(--mono);padding:2px 7px;border-radius:4px;font-weight:700;letter-spacing:.05em}
+.b-fix{background:rgba(74,222,128,.14);color:#7ee8a5;border:1px solid rgba(74,222,128,.3)}
+.b-new{background:rgba(245,158,11,.14);color:#fcc46b;border:1px solid rgba(245,158,11,.3)}
+.b-todo{background:rgba(239,68,68,.14);color:#ff9090;border:1px solid rgba(239,68,68,.3)}
+.b-p1{background:rgba(239,68,68,.16);color:#ff8f8f;border:1px solid rgba(239,68,68,.35)}
+.b-p2{background:rgba(88,166,255,.13);color:#8fc4ff;border:1px solid rgba(88,166,255,.3)}
+.b-p3{background:rgba(139,152,169,.13);color:#b0bec5;border:1px solid rgba(139,152,169,.3)}
+.b-tag{background:var(--panel2);color:var(--muted);border:1px solid var(--border);font-weight:500}
+.loc{font-family:var(--mono);font-size:.78rem;color:var(--muted);margin-bottom:7px}
+.f p{font-size:.91rem;margin:6px 0}
+pre{background:#0a0e13;border:1px solid var(--border);border-radius:8px;padding:11px 14px;overflow-x:auto;font-family:var(--mono);font-size:.79rem;line-height:1.6;margin:9px 0;color:#c9d4e0}
+pre .c{color:#6b7a8f} pre .g{color:#7ee8a5} pre .r{color:#ff9090}
+.ev{background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.18);border-radius:7px;padding:9px 13px;font-size:.86rem;margin-top:9px;font-family:var(--mono);color:#a8dcc0}
+.fixbox{background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.2);border-radius:7px;padding:9px 13px;font-size:.87rem;margin-top:9px}
+.fixbox b{color:var(--info)}
+ul{margin:8px 0 8px 20px} li{margin:5px 0;color:#c9d4e0;font-size:.91rem}
+.box{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin:16px 0}
+.verdict{background:linear-gradient(90deg,rgba(250,167,24,.1),transparent);border:1px solid rgba(250,167,24,.25);border-radius:10px;padding:16px 20px;margin:18px 0}
+footer{margin-top:52px;padding-top:18px;border-top:1px solid var(--border);color:var(--muted);font-size:.82rem;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>HKG Flight Data v3 — <span>代码审查报告 v3</span></h1>
+  <div class="sub">审查人: ZCode Agent · 基线 HEAD c2d462f · 全部 Python 源码 3,544 行 + 文档 6 份 + 测试 58 项 · 2026-09-07</div>
+</header>
+
+<div class="verdict">
+  <p><strong>结论：项目安全基线已建立，但 TUI 交互缺陷、Web 前端健壮性和代码清洁度仍需集中处理。</strong></p>
+  <p style="margin-bottom:0">共发现 <strong>21 项问题</strong>：其中 <strong class="mid">4 项 P1</strong>（影响用户体验）、<strong class="mid">13 项 P2</strong>（代码质量与架构）、<strong style="color:#b0bec5">4 项 P3</strong>（小瑕疵）。上一轮报告的 30 项中 14 项已修复、6 项新引入或不彻底、12 项未处理——本报告在其基础上重新独立审查，合并确认并新增发现。</p>
+</div>
+
+<div class="delta">
+  <div class="d"><div class="t">安全 SECURITY</div><div class="n"><span class="up">B+</span></div></div>
+  <div class="d"><div class="t">功能完整性</div><div class="n"><span class="mid">C+</span></div></div>
+  <div class="d"><div class="t">代码质量</div><div class="n"><span class="mid">C+</span></div></div>
+  <div class="d"><div class="t">测试覆盖</div><div class="n"><span class="up">B-</span></div></div>
+  <div class="d"><div class="t">文档一致性</div><div class="n"><span class="mid">C</span></div></div>
+  <div class="d"><div class="t">工程化</div><div class="n"><span class="down">D</span></div></div>
+</div>
+
+<!-- ============================================================ -->
+<h2>一、P1 — 影响用户体验的问题（4 项）</h2>
+<!-- ============================================================ -->
+
+<div class="f todo">
+  <h4>F1. <code>Poller.stop()</code> 竞态条件 — 线程可能永远不会终止 <span class="badge b-p1">P1</span> <span class="badge b-tag">并发</span></h4>
+  <div class="loc">poller.py:50-55</div>
+<pre><span class="c"># 当前代码</span>
+def stop(self):
+    self._stop_event.set()
+    if self._thread:
+        self._thread.join(timeout=5)  <span class="c"># 只等 5 秒</span></pre>
+  <p><code>_run()</code> 中 <code>self._stop_event.wait(self.poll_interval)</code> 默认等待 30 秒。<code>join(5)</code> 超时后线程仍在运行，旧线程永远不会被终止，造成资源泄漏。下次调用 <code>start()</code> 时 <code>is_alive()</code> 检查会阻止新线程启动，但旧线程仍占用资源。</p>
+  <div class="fixbox"><b>修复建议：</b>在 <code>stop()</code> 中将 <code>poll_interval</code> 临时设为 1 秒再 join；或在 <code>_run()</code> 的循环末尾直接 <code>if self._stop_event.is_set(): break</code>。</div>
+</div>
+
+<div class="f todo">
+  <h4>F2. Web 前端无错误处理 — API 异常导致白屏 <span class="badge b-p1">P1</span> <span class="badge b-tag">前端</span></h4>
+  <div class="loc">web.py:348-353 (内嵌 JS)</div>
+<pre>async function loadFlights() {
+    const res = await fetch(`${API_BASE}/flights`);
+    allFlights = await res.json();  <span class="c">// 若返回 {"error":"..."} 则 allFlights 变为对象</span>
+    renderFlights();                <span class="c">// → flights.filter(...) 抛 TypeError → 白屏</span>
+}</pre>
+  <p>三个缺陷叠加：(1) 无 <code>try/catch</code> — 网络错误静默抛异常；(2) 未检查 <code>Array.isArray(data)</code> — 参数校验失败时 <code>allFlights</code> 变为对象；(3) 未检查 <code>res.ok</code> — 500 等错误仍尝试解析。</p>
+  <div class="fixbox"><b>修复建议：</b></div>
+<pre>async function loadFlights() {
+    try {
+        const res = await fetch(`${API_BASE}/flights`);
+        const data = await res.json();
+        allFlights = Array.isArray(data) ? data : [];
+        renderFlights();
+    } catch(e) { console.error('Failed to load flights:', e); }
+}</pre>
+</div>
+
+<div class="f todo">
+  <h4>F3. API 参数错误返回 HTTP 200 — 前端白屏 <span class="badge b-p1">P1</span> <span class="badge b-tag">API 语义</span></h4>
+  <div class="loc">web.py:174-175, 214-215</div>
+<pre>if not _validate_date(date_str):
+    return {"error": "Invalid date format. Use YYYY-MM-DD"}  <span class="c"># HTTP 200 返回错误 dict</span></pre>
+  <p>前端 <code>allFlights = await res.json()</code> 拿到的是 <code>{"error": "..."}</code> 而非数组，随后 <code>flights.filter(...)</code> 抛 <code>TypeError</code>，页面静默白屏。路由级 404 已正确使用 <code>_send_error(404, ...)</code>，此处却没用上。</p>
+  <div class="fixbox"><b>修复建议：</b>让 <code>api_flights</code>/<code>api_search</code> 返回时由 handler 判断：如果是错误 dict 则调用 <code>_send_error(400, ...)</code>；或让 API 方法抛异常，handler 统一捕获。</div>
+</div>
+
+<div class="f todo">
+  <h4>F4. curses <code>handle_key()</code> 按键处理逻辑混乱 — filter 输入部分失效 <span class="badge b-p1">P1</span> <span class="badge b-tag">TUI</span></h4>
+  <div class="loc">tui.py:560, 579, 583</div>
+<pre>elif ch == 27 or ch in (ord("0"),):  <span class="c"># 第 560 行 — 数字 0 误清 filter</span>
+    self.filter_text = ""
+<span class="c">...</span>
+elif ch == 27:                        <span class="c"># 第 579 行 — 不可达分支（已被 560 捕获）</span>
+    self.filter_text = ""
+<span class="c">...</span>
+elif 32 <= ch < 127:                  <span class="c"># 第 583 行 — 可打印字符过滤输入</span>
+    self.filter_text += chr(ch)</pre>
+  <p>问题汇总：(1) <code>ch in (ord("0"),)</code> 导致按数字 <code>0</code> 会清空 filter（疑似笔误）；(2) 第 579 行 <code>elif ch == 27</code> 永远不可达；(3) README 声称 "Type any text → Filter" 在 curses 下字母键可输入，但数字键被 mode 切换拦截。</p>
+  <div class="fixbox"><b>修复建议：</b>删除 <code>ch in (ord("0"),)</code>，删除第 579 行不可达分支，将 mode 切换逻辑放在过滤输入逻辑之前，确保 Esc 用 <code>ch == 27</code> 单独判断。</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>二、P2 — 代码质量与架构问题（13 项）</h2>
+<!-- ============================================================ -->
+
+<div class="f new">
+  <h4>N1. <code>_validate_date</code> 被复制了三份 <span class="badge b-p2">P2</span> <span class="badge b-tag">重复代码</span></h4>
+  <div class="loc">api.py:19 · cache.py:27 · web.py:17</div>
+  <p>同一个正则校验函数在三个模块各写了一遍。改校验规则要动三个地方，正是上一轮"两份实现分叉"的缩小版重演。</p>
+  <div class="fixbox"><b>建议：</b>下沉到 <code>utils.py</code> 定义一份 <code>validate_date()</code>，三处 import 复用。顺带把 <code>_safe_cache_path</code> 也一并放过去。</div>
+</div>
+
+<div class="f new">
+  <h4>N2. 未使用导入未清理 — 约 15 处 <span class="badge b-p2">P2</span> <span class="badge b-tag">清洁度</span></h4>
+  <div class="loc">多文件</div>
+  <table>
+  <tr><th>文件</th><th>未使用导入</th></tr>
+  <tr><td><code>cli.py</code></td><td><code>threading</code>, <code>DEFAULT_MIN_API_INTERVAL</code>, <code>API_BASE</code>, <code>make_flight_key</code>, <code>format_time</code>, <code>get_status_info</code>, <code>status_pair</code>, <code>filter_records</code>, <code>shutil</code></td></tr>
+  <tr><td><code>tui.py</code></td><td><code>threading</code>, <code>log</code>, <code>get_status_info</code></td></tr>
+  <tr><td><code>web.py</code></td><td><code>route_text</code>, <code>gate_stand_text</code>, <code>filter_records</code></td></tr>
+  <tr><td><code>cache.py</code></td><td><code>sys</code></td></tr>
+  <tr><td><code>cleanup_alerts.py</code></td><td><code>json</code></td></tr>
+  </table>
+</div>
+
+<div class="f new">
+  <h4>N3. COMMANDS.md 第 119 行命令语法错误 <span class="badge b-p2">P2</span> <span class="badge b-tag">文档</span></h4>
+  <div class="loc">COMMANDS.md:119</div>
+<pre><span class="r">$ python -m hkg_flight web --force</span>
+hkg_flight: error: unrecognized arguments: --force      <span class="c"># exit 2</span>
+<span class="g">$ python -m hkg_flight --force web</span>                      <span class="c"># 正确</span></pre>
+  <p><code>--force</code> / <code>--cache-dir</code> 是全局选项，必须写在子命令之前。文档里这条会直接报错退出。</p>
+  <div class="fixbox"><b>建议：</b>把文档改成 <code>--force web</code>；或给 <code>web</code> 子命令也加一个 <code>--force</code>（argparse 支持父子解析器同名 dest）。</div>
+</div>
+
+<div class="f new">
+  <h4>N4. <code>--force</code> 语义过重 — 清空全部缓存 <span class="badge b-p2">P2</span> <span class="badge b-tag">体验</span></h4>
+  <div class="loc">cli.py:417-419 → clear_cache(confirm=True)</div>
+  <p>原建议是"绕过本次缓存"，现在实现仍是<strong>清空整个缓存目录</strong>，且 <code>confirm=True</code> 跳过确认。后果：<code>--force query CX759</code> 会连带删掉 <code>alerts.json</code>（告警历史）和 <code>airlines.json</code>（24h 缓存）。</p>
+  <div class="fixbox"><b>建议：</b>让 <code>APIClient</code> 支持 <code>bypass_cache</code> 标志（本次请求直连 API 不读缓存），<code>--force</code> 只切换该标志，不动磁盘。</div>
+</div>
+
+<div class="f new">
+  <h4>N5. <code>_esc()</code> 定义但从未使用 <span class="badge b-p2">P2</span> <span class="badge b-tag">死代码</span></h4>
+  <div class="loc">web.py:24-26</div>
+  <p>转义实际由前端 JS 的 <code>esc()</code> 完成，这个 Python 函数没有任何调用点。留着会让人误以为服务端也做了过滤，是安全隐患式的误导。</p>
+  <div class="fixbox"><b>建议：</b>删除；或保留并在 <code>api_*()</code> 返回前对字段做一次服务端净化（纵深防御更稳）。</div>
+</div>
+
+<div class="f new">
+  <h4>N6. SSE 端点是死代码 — 只发心跳不推送更新 <span class="badge b-p2">P2</span> <span class="badge b-tag">功能</span></h4>
+  <div class="loc">web.py:136-165</div>
+<pre>while True:
+    time.sleep(1)
+    client.write(b":heartbeat\n\n")  <span class="c"># 只发注释行心跳</span>
+    client.flush()</pre>
+  <p>SSE 连接只在建立时发送一次初始告警数据，之后<strong>只发送心跳</strong>，永不推送航班变更。前端完全靠 <code>setInterval(loadFlights, 30000)</code> 30 秒轮询。README 第 107 行仍声称 "auto-refreshes via SSE"。</p>
+  <div class="fixbox"><b>建议：</b>二选一——(a) 在 <code>Poller.refresh_today()</code> 后通知 WebServer 推送事件；(b) 删除 SSE 端点，前端改纯轮询，更新文档。</div>
+</div>
+
+<div class="f new">
+  <h4>N7. <code>AlertManager._clear_for_key()</code> 列表修改不安全 <span class="badge b-p2">P2</span> <span class="badge b-tag">并发</span></h4>
+  <div class="loc">alerts.py:119-128</div>
+<pre>with self.lock:
+    active = self._alerts.get("active", [])
+    to_remove = [a for a in active if a.get("key") == key]
+    if to_remove:
+        for alert in to_remove:
+            active.remove(alert)  <span class="c"># 修改正在迭代的列表，多条告警时可能跳过</span></pre>
+  <p>同一 key 可能有多条告警（GATE + STAND），<code>remove()</code> 在遍历时修改列表可能导致元素跳过。</p>
+  <div class="fixbox"><b>建议：</b>用列表推导一次性重建：self._alerts["active"] = [a for a in active if a.get("key") != key]；self._alerts.setdefault("history", []).extend(to_remove)</div>
+</div>
+
+<div class="f todo">
+  <h4>N8. 未使用导入 / 死代码未清理（汇总） <span class="badge b-p2">P2</span> <span class="badge b-tag">清洁度</span></h4>
+  <div class="loc">多文件</div>
+  <table>
+  <tr><th>位置</th><th>死代码</th></tr>
+  <tr><td><code>poller.py:116-138</code></td><td><code>_make_snapshot()</code> / <code>_snapshot_changed()</code> — 0 调用</td></tr>
+  <tr><td><code>cache.py:143-151</code></td><td><code>read_state()</code> / <code>write_state()</code> — 0 调用，且未导出</td></tr>
+  <tr><td><code>web.py:24-26</code></td><td><code>_esc()</code> — 0 调用</td></tr>
+  <tr><td><code>tui.py:255,569-573</code></td><td><code>self.scroll</code> — 累加但渲染从不读取</td></tr>
+  <tr><td><code>tui.py:505-510</code></td><td><code>cmd_date()</code> — 空壳功能，无按键绑定</td></tr>
+  <tr><td><code>cli.py:238</code></td><td><code>import shutil</code> — 改用 os.remove 后未删除</td></tr>
+  </table>
+</div>
+
+<div class="f new">
+  <h4>N9. 非今日日期 API 失败时静默返回今日数据 <span class="badge b-p2">P2</span> <span class="badge b-tag">逻辑</span></h4>
+  <div class="loc">web.py:181-188</div>
+<pre>if self.poller:
+    records = self.poller.today_records
+    if date_str != today_str():
+        raw_data = self.api.fetch_flights(date_str)
+        if raw_data:                     <span class="c"># API 失败时 raw_data 为 None，跳过</span>
+            records = normalize_flights(raw_data)  <span class="c"># records 仍为今日数据</span></pre>
+  <p>当 <code>poller</code> 存在且日期非今日时，API 失败会静默返回今日数据，而非空列表或错误提示。</p>
+  <div class="fixbox"><b>建议：</b>API 失败时 <code>records = []</code>，或返回错误信息。</div>
+</div>
+
+<div class="f todo">
+  <h4>N10. 无 <code>pyproject.toml</code> — 项目不可 pip install <span class="badge b-p2">P2</span> <span class="badge b-tag">工程化</span></h4>
+  <div class="loc">项目根目录</div>
+  <p>项目使用了包结构 (<code>hkg_flight/</code>) 但没有声明为可安装的 Python 包。缺少 <code>pyproject.toml</code>（PEP 621）、<code>console_scripts</code> 入口点、CI 配置（GitHub Actions）、linter 配置（ruff）。目前 <code>python -m hkg_flight</code> 只在项目根目录下可用。</p>
+  <div class="fixbox"><b>建议：</b>添加 <code>pyproject.toml</code>，配置 <code>[project.scripts]</code> 入口点，添加 GitHub Actions CI（unittest + ruff）。</div>
+</div>
+
+<div class="f new">
+  <h4>N11. SSE 异常处理不完整 <span class="badge b-p2">P2</span> <span class="badge b-tag">健壮性</span></h4>
+  <div class="loc">web.py:160-161</div>
+<pre>except (BrokenPipeError, ConnectionResetError):
+    pass</pre>
+  <p>其他异常（如 <code>OSError: [Errno 22] Invalid argument</code>）会传播到 ThreadingHTTPServer 的线程异常处理，可能打印堆栈但不清理 <code>_clients</code> 列表中的过期引用。</p>
+  <div class="fixbox"><b>建议：</b>改为 <code>except Exception: pass</code>，确保 <code>finally</code> 块中的清理代码一定执行。</div>
+</div>
+
+<div class="f todo">
+  <h4>N12. <code>utils.py</code> <code>log()</code> 只有日期没有时间 <span class="badge b-p2">P2</span> <span class="badge b-tag">可观测性</span></h4>
+  <div class="loc">utils.py:69-72</div>
+<pre>def log(msg):
+    ts = date.today().isoformat()  <span class="c"># 只有 2026-09-07，没有时分秒</span>
+    print("[hkg_flight] {} {}".format(ts, msg), file=sys.stderr)</pre>
+  <p>输出类似 <code>[hkg_flight] 2026-09-07 Poller started</code> — 无法判断事件发生的具体时间，调试时不方便。</p>
+  <div class="fixbox"><b>建议：</b>改用 <code>datetime.now().strftime("%Y-%m-%d %H:%M:%S")</code>。</div>
+</div>
+
+<div class="f new">
+  <h4>N13. CLI 表格输出无宽度截断 <span class="badge b-p2">P2</span> <span class="badge b-tag">输出</span></h4>
+  <div class="loc">cli.py:280-298</div>
+<pre>print("{:<6} {:<10} {:<6} {:<20} {:<18} {:<12} {:<5}".format(
+    time_str, flight, reg, route, status, gs, term
+))</pre>
+  <p><code>route</code> 和 <code>status</code> 使用固定宽度 <code>{&lt;20}</code> / <code>{&lt;18}</code>，但多航段航线（如 <code>SIN|BKK|NRT</code>）或长状态文本会超出列宽，破坏整行对齐。</p>
+  <div class="fixbox"><b>建议：</b>对 route 和 status 做截断：<code>route[:18]</code>、<code>status[:16]</code>。</div>
+</div>
+
+<!-- ============================================================ -->
+<h2>三、P3 — 小瑕疵（4 项）</h2>
+<!-- ============================================================ -->
+
+<div class="box">
+  <table>
+  <tr><th style="width:50px">编号</th><th style="width:60px">位置</th><th>问题</th></tr>
+  <tr><td>F5</td><td><code>tui.py:505</code></td><td><code>cmd_date()</code> 空壳功能 — prompt 读取输入后 <code>pass</code>，无按键绑定</td></tr>
+  <tr><td>F6</td><td><code>test_hkg_flight.py:8</code></td><td><code>json</code> 模块导入但未使用，测试文件也有未清理导入</td></tr>
+  <tr><td>F7</td><td><code>cleanup_alerts.py</code></td><td>使用 f-string（Python 3.6+），主代码库用 <code>.format()</code>，风格不一致</td></tr>
+  <tr><td>F8</td><td>工程化</td><td>仍无 <code>--no-color</code> 与 <code>NO_COLOR</code> 环境变量支持，管道/重定向会带 ANSI 乱码</td></tr>
+  </table>
+</div>
+
+<!-- ============================================================ -->
+<h2>四、修复优先级建议（按投入产出比）</h2>
+<!-- ============================================================ -->
+
+<table>
+<tr><th style="width:70px">优先级</th><th>动作</th><th style="width:26%">收益</th></tr>
+<tr><td><strong>1</strong></td><td>修复 <code>handle_key()</code> 按键逻辑 + 前端加 try/catch 和 Array.isArray 校验 + API 错误返回 400</td><td>消除 TUI filter bug 和 Web 白屏（约 30 行）</td></tr>
+<tr><td><strong>2</strong></td><td><code>_validate_date</code> 收敛到 utils 单份；清理 15 处未使用导入与 6 处死代码</td><td>消除分叉隐患，代码清洁度提升</td></tr>
+<tr><td><strong>3</strong></td><td>修复 <code>Poller.stop()</code> 竞态 + <code>_clear_for_key()</code> 列表重建 + 非今日日期错误处理</td><td>并发安全与数据正确性</td></tr>
+<tr><td><strong>4</strong></td><td>加 <code>pyproject.toml</code> + GitHub Actions（unittest + ruff）</td><td>把"58/58 通过"变成持续事实</td></tr>
+<tr><td><strong>5</strong></td><td>SSE 二选一（真推送 / 删除并改文档）；<code>--force</code> 改语义为 bypass_cache</td><td>文档与实现对齐，消除误删告警</td></tr>
+<tr><td><strong>6</strong></td><td><code>log()</code> 加时间；CLI 列宽截断；ANSI 颜色 no-color 支持</td><td>长期运行稳定性与输出美观</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2>五、与上一轮报告的对照</h2>
+<!-- ============================================================ -->
+
+<div class="box">
+<h4 style="margin-bottom:12px">上一轮 30 项状态跟踪</h4>
+<table>
+<tr><th style="width:40px">状态</th><th style="width:50px">数量</th><th>说明</th></tr>
+<tr><td class="up">✅ 已修复</td><td>14</td><td>含全部 6 项 P0（XSS / 路径穿越 / 双实现 / 崩溃）与 5 项 P1（CORS / 0.0.0.0 / 端口释放 / argparse / Web UI 美观度）</td></tr>
+<tr><td class="mid">⚠️ 新引入/不彻底</td><td>6</td><td>_validate_date 三份 (N1)、_esc 死代码 (N5)、shutil 死导入 (N6-本轮编号)、HTTP 200 错误 (F3)、COMMANDS.md 语法错误 (N3)、--force 语义 (N4)</td></tr>
+<tr><td class="down">❌ 未处理</td><td>10</td><td>curses filter/scroll/搜索日期、SSE 空壳、告警无上界、log 无时间、CLI 对齐、工程化</td></tr>
+</table>
+<p style="margin-top:12px"><strong>本报告新增发现</strong>：F1（Poller.stop 竞态）、F2（前端无错误处理）、F7（_clear_for_key 列表修改）、F8（self.scroll 无效）、F9（cmd_date 空壳）、F10（非今日日期错误处理）、F11（log 无时间）、F12（表格无截断）、F13（测试未清理导入）、N8（死代码汇总）、N9（非今日日期逻辑）、N11（SSE 异常）、N12（log 无时间）、N13（表格截断）</p>
+</div>
+
+<!-- ============================================================ -->
+<h2>六、整体评价</h2>
+<!-- ============================================================ -->
+
+<div class="verdict">
+  <p>这是一个功能明确、架构合理的项目。上一轮审查后的安全修复（XSS 转义、路径穿越防护、本地绑定）做得扎实。主要技术债集中在三个方面：</p>
+  <ul style="margin:12px 0 12px 20px">
+    <li><strong>TUI curses 版交互不完整</strong> — filter 输入和按键处理存在 bug，影响日常使用</li>
+    <li><strong>Web 前端缺乏健壮性</strong> — 无错误处理、SSE 是空壳、API 错误返回语义不正确</li>
+    <li><strong>代码清洁度</strong> — 重复函数、死代码、未使用导入积累较多，需要一次性清理</li>
+  </ul>
+  <p style="margin-bottom:0">按上述优先级 1→6 逐步修复，项目可以稳定在 <strong>B</strong> 水平。当前最紧急的是 P1 四项（约 30 行改动），投入产出比最高。</p>
+</div>
+
+<footer>
+审查于 2026-09-07 · Python 3.13.12 · 审查方式：全量源码静态审查 + unittest 58/58 通过验证 + AST 未使用导入分析<br>
+基线 HEAD c2d462f · 审查工具：ZCode Agent (独立审查，参考 CODE-REVIEW.html v2 报告)
+</footer>
+
+</div>
+</body>
+</html>

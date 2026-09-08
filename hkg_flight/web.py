@@ -1,35 +1,27 @@
 """
 HKG Flight Data v3 - Web Server Module
-HTTP server with REST API and SSE for real-time updates.
+HTTP server with REST API and web dashboard (browser polls every 30s).
 """
 
 import json
-import re
 import threading
-import time
 import urllib.parse
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .utils import log, route_text, gate_stand_text, today_str, normalize_flights, sort_flights, filter_records
-
-
-def _validate_date(date_str):
-    """Validate date string format (YYYY-MM-DD). Returns True if valid."""
-    if not isinstance(date_str, str):
-        return False
-    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str))
-
-
-def _esc(s):
-    """Escape HTML special characters to prevent XSS."""
-    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#x27;")
+from .utils import (
+    log,
+    normalize_flight_number,
+    normalize_flights,
+    sort_flights,
+    today_str,
+    validate_date,
+)
 
 
 class WebServer(object):
     """
     HTTP server providing flight data API and web UI.
-    Supports Server-Sent Events for real-time updates.
     """
 
     def __init__(self, poller, api, alert_manager, port=8080, host="127.0.0.1"):
@@ -40,8 +32,6 @@ class WebServer(object):
         self.host = host
         self._server = None
         self._thread = None
-        self._clients = []  # SSE clients
-        self._clients_lock = threading.Lock()
 
     def running(self):
         """Check if server is running."""
@@ -70,12 +60,9 @@ class WebServer(object):
 
     def get_stats(self):
         """Get server statistics."""
-        with self._clients_lock:
-            client_count = len(self._clients)
         return {
             "time": datetime.now().isoformat(),
             "alerts": self.alert_manager.active_count() if self.alert_manager else 0,
-            "clients": client_count,
             "polling": self.poller.enabled if self.poller else False,
         }
 
@@ -119,73 +106,39 @@ class WebServer(object):
                 if path == "/":
                     self._send_html(server.web_ui())
                 elif path == "/api/flights":
-                    self._send_json(server.api_flights(params))
+                    try:
+                        self._send_json(server.api_flights(params))
+                    except ValueError as exc:
+                        self._send_error(400, str(exc))
                 elif path == "/api/search":
-                    self._send_json(server.api_search(params))
+                    try:
+                        self._send_json(server.api_search(params))
+                    except ValueError as exc:
+                        self._send_error(400, str(exc))
                 elif path == "/api/alerts":
                     self._send_json(server.api_alerts())
                 elif path == "/api/stats":
                     self._send_json(server.get_stats())
                 elif path == "/api/airlines":
                     self._send_json(server.api_airlines())
-                elif path == "/api/stream":
-                    self._handle_stream()
                 else:
                     self._send_error(404, "Not found")
-
-            def _handle_stream(self):
-                """Handle SSE stream."""
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("Connection", "keep-alive")
-                self.end_headers()
-
-                client = self.wfile
-                with server._clients_lock:
-                    server._clients.append(client)
-
-                try:
-                    # Send initial data
-                    data = json.dumps(server.api_alerts(), ensure_ascii=False)
-                    client.write(b"data: " + data.encode("utf-8") + b"\n\n")
-                    client.flush()
-
-                    # Keep connection alive
-                    while True:
-                        time.sleep(1)
-                        # Send heartbeat
-                        client.write(b":heartbeat\n\n")
-                        client.flush()
-                except (BrokenPipeError, ConnectionResetError):
-                    pass
-                finally:
-                    with server._clients_lock:
-                        if client in server._clients:
-                            server._clients.remove(client)
 
         return Handler
 
     def api_flights(self, params):
-        """API: Get flights."""
+        """API: Get flights. Raises ValueError on invalid parameters."""
         date_str = params.get("date", [today_str()])[0]
-        
-        # Validate date format
-        if not _validate_date(date_str):
-            return {"error": "Invalid date format. Use YYYY-MM-DD"}
-        
+
+        if not validate_date(date_str):
+            raise ValueError("Invalid date format. Use YYYY-MM-DD")
+
         flight_type = params.get("type", ["all"])[0]
         terminal = params.get("terminal", [None])[0]
         status = params.get("status", [None])[0]
 
-        if self.poller:
+        if self.poller and date_str == today_str():
             records = self.poller.today_records
-            # Filter by date if not today
-            if date_str != today_str():
-                raw_data = self.api.fetch_flights(date_str)
-                if raw_data:
-                    records = normalize_flights(raw_data)
-                    records = sort_flights(records)
         else:
             raw_data = self.api.fetch_flights(date_str)
             records = normalize_flights(raw_data) if raw_data else []
@@ -206,13 +159,12 @@ class WebServer(object):
         return records
 
     def api_search(self, params):
-        """API: Search flights."""
+        """API: Search flights. Raises ValueError on invalid parameters."""
         flight_number = params.get("flight", [""])[0]
         date_str = params.get("date", [today_str()])[0]
-        
-        # Validate date format
-        if not _validate_date(date_str):
-            return {"error": "Invalid date format. Use YYYY-MM-DD"}
+
+        if not validate_date(date_str):
+            raise ValueError("Invalid date format. Use YYYY-MM-DD")
 
         if not flight_number:
             return []
@@ -222,7 +174,6 @@ class WebServer(object):
             return []
 
         records = normalize_flights(raw_data)
-        from .utils import normalize_flight_number
         search_no = normalize_flight_number(flight_number)
 
         results = []
@@ -288,7 +239,6 @@ class WebServer(object):
         .status-cancelled { background: rgba(239,68,68,.16); color: var(--bad); border: 1px solid rgba(239,68,68,.3); }
         .status-delayed { background: rgba(245,158,11,.16); color: var(--warn); border: 1px solid rgba(245,158,11,.3); }
         .empty-state { text-align: center; padding: 3rem; color: var(--muted); }
-        .alert-banner { background: var(--accent); color: #000; padding: 0.5rem; text-align: center; display: none; }
         @media (max-width: 768px) {
             .filters { flex-direction: column; }
             .filters input { width: 100%; }
@@ -303,7 +253,6 @@ class WebServer(object):
             <span id="last-update">Loading...</span>
         </div>
     </div>
-    <div class="alert-banner" id="alert-banner"></div>
     <div class="container">
         <div class="filters">
             <input type="text" id="search" placeholder="Search flight...">
@@ -346,10 +295,19 @@ class WebServer(object):
         }
 
         async function loadFlights() {
-            const res = await fetch(`${API_BASE}/flights`);
-            allFlights = await res.json();
-            renderFlights();
-            document.getElementById('last-update').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+            try {
+                const res = await fetch(`${API_BASE}/flights`);
+                if (!res.ok) {
+                    console.error('Flights API error: ' + res.status);
+                    return;
+                }
+                const data = await res.json();
+                allFlights = Array.isArray(data) ? data : [];
+                renderFlights();
+                document.getElementById('last-update').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+            } catch (e) {
+                console.error('Failed to load flights:', e);
+            }
         }
 
         function renderFlights() {

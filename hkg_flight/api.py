@@ -4,23 +4,15 @@ Handles communication with the HKIA flight API.
 """
 
 import json
-import re
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-from .utils import log
+from .utils import log, validate_date
 
 
 API_BASE = "https://www.hongkongairport.com/flightinfo-rest/rest"
-
-
-def _validate_date(date_str):
-    """Validate date string format (YYYY-MM-DD). Returns True if valid."""
-    if not isinstance(date_str, str):
-        return False
-    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str))
 
 
 class APIClient(object):
@@ -28,12 +20,12 @@ class APIClient(object):
     HKIA REST API client with rate limiting and caching.
     """
 
-    def __init__(self, cache=None, min_interval=0.6, airlines_cache_hours=24):
+    def __init__(self, cache=None, min_interval=0.6, airlines_cache_hours=24, bypass_cache=False):
         self.cache = cache
         self.min_interval = min_interval
         self.airlines_cache_hours = airlines_cache_hours
+        self.bypass_cache = bypass_cache
         self._last_call = 0.0
-        self._lock = False
         self._airlines_cache = None
         self._airlines_cache_time = 0.0
 
@@ -71,7 +63,7 @@ class APIClient(object):
             list: Raw flight data from API, or None on failure
         """
         # Validate date format to prevent path traversal and injection
-        if not _validate_date(date_str):
+        if not validate_date(date_str):
             log("Invalid date format: {}".format(date_str))
             return None
         
@@ -91,8 +83,8 @@ class APIClient(object):
         Returns:
             list: Airline data, or empty list on failure
         """
-        # Use cache if fresh enough
-        if self.cache is not None:
+        # Use cache if fresh enough unless this run explicitly bypasses it.
+        if self.cache is not None and not self.bypass_cache:
             cached = self.cache.read_airlines()
             if cached:
                 cache_age = self.cache.cache_age_minutes(self.cache.airlines_path)
@@ -108,8 +100,8 @@ class APIClient(object):
             if self.cache is not None:
                 self.cache.write_airlines(data)
             return data
-        # Fallback to cache
-        if self.cache is not None:
+        # Fall back to cache unless this run explicitly bypasses cached data.
+        if self.cache is not None and not self.bypass_cache:
             return self.cache.read_airlines()
         return []
 

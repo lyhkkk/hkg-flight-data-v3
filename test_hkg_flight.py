@@ -3,11 +3,11 @@
 
 import os
 import sys
-import json
 import time
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from contextlib import redirect_stdout
+from unittest.mock import MagicMock
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -31,10 +31,34 @@ from hkg_flight import (
     filter_records,
     search_flights,
     flights_for_date,
-    load_airlines,
-    DEFAULT_CACHE_DIR,
-    DEFAULT_MIN_API_INTERVAL,
 )
+from hkg_flight.web import WebServer
+from hkg_flight.tui import CursesTUI
+
+
+class FakeCursesScreen:
+    """Small curses-screen double for deterministic TUI rendering tests."""
+
+    def __init__(self, height=30, width=120):
+        self.height = height
+        self.width = width
+        self.timeout_value = None
+        self.lines = []
+
+    def timeout(self, value):
+        self.timeout_value = value
+
+    def clear(self):
+        self.lines = []
+
+    def getmaxyx(self):
+        return self.height, self.width
+
+    def addstr(self, *args):
+        self.lines.append(args)
+
+    def refresh(self):
+        pass
 
 
 class TestUtilityFunctions(unittest.TestCase):
@@ -567,6 +591,30 @@ class TestAlertManager(unittest.TestCase):
         self.alert_mgr.process_flight(old, new)
         self.assertEqual(self.alert_mgr.active_count(), 0)
 
+    def test_alert_history_is_bounded(self):
+        """Test saved alert history retains only the newest entries."""
+        from hkg_flight.alerts import MAX_HISTORY
+
+        self.alert_mgr._alerts["history"] = [{"id": i} for i in range(MAX_HISTORY + 7)]
+        self.alert_mgr.save()
+
+        history = self.alert_mgr.get_history()
+        self.assertEqual(len(history), MAX_HISTORY)
+        self.assertEqual(history[0]["id"], 7)
+        self.assertEqual(history[-1]["id"], MAX_HISTORY + 6)
+
+    def test_alert_queries_return_copies(self):
+        """Test callers cannot mutate alert manager state through query results."""
+        active = [{"key": "flight", "nested": {"value": 1}}]
+        self.alert_mgr._alerts["active"] = active
+
+        result = self.alert_mgr.get_active()
+        result[0]["nested"]["value"] = 99
+        result.append({"key": "other"})
+
+        self.assertEqual(self.alert_mgr.active_count(), 1)
+        self.assertEqual(self.alert_mgr.get_active()[0]["nested"]["value"], 1)
+
     def test_alert_cleared_on_departed(self):
         """Test alert is cleared when flight departs"""
         # First create an alert
@@ -628,6 +676,25 @@ class TestAPIClient(unittest.TestCase):
         client = APIClient(cache=self.cache)
         self.assertIsNotNone(client)
 
+    def test_bypass_cache_fetches_airlines_and_preserves_cache(self):
+        """Test bypass_cache avoids fresh airline reads without deleting files."""
+        cached = [{"code": "CX", "name": "Cached"}]
+        fresh = [{"code": "CX", "name": "Fresh"}]
+        self.cache.write_airlines(cached)
+        client = APIClient(cache=self.cache, bypass_cache=True)
+        client._request_json = MagicMock(return_value=fresh)
+
+        self.assertEqual(client.fetch_airlines(), fresh)
+        self.assertEqual(self.cache.read_airlines(), fresh)
+
+    def test_invalid_flight_date_is_rejected(self):
+        """Test invalid dates never reach the HTTP request."""
+        client = APIClient(cache=self.cache)
+        client._request_json = MagicMock()
+
+        self.assertIsNone(client.fetch_flights("../../../evil"))
+        client._request_json.assert_not_called()
+
     def test_rate_limit(self):
         """Test rate limiting"""
         client = APIClient(cache=self.cache, min_interval=0.1)
@@ -638,6 +705,130 @@ class TestAPIClient(unittest.TestCase):
         elapsed = time.time() - start
         
         self.assertGreaterEqual(elapsed, 0.09)  # Allow small timing variance
+
+
+class TestPoller(unittest.TestCase):
+    """Test background poller lifecycle and cache fallback."""
+
+    def test_stop_wakes_polling_thread(self):
+        """Test stop terminates a long-interval poller promptly."""
+        api = MagicMock()
+        api.fetch_flights.return_value = []
+        poller = Poller(api=api, poll_interval=60)
+        poller.start()
+        try:
+            started = poller._thread
+            poller.stop()
+            self.assertFalse(started.is_alive())
+        finally:
+            poller.stop()
+
+    def test_refresh_uses_cache_when_api_fails(self):
+        """Test today's cached flights are used when the API fails."""
+        temp_dir = tempfile.mkdtemp()
+        try:
+            cache = CacheSystem(cache_dir=temp_dir)
+            cache.write_flights(today_str(), [])
+            api = MagicMock()
+            api.fetch_flights.return_value = None
+            poller = Poller(cache=cache, api=api)
+            self.assertEqual(poller.refresh_today(), [])
+        finally:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+class TestWebServer(unittest.TestCase):
+    """Test WebServer API semantics without external network calls."""
+
+    def setUp(self):
+        self.api = MagicMock()
+        self.poller = MagicMock()
+        self.poller.today_records = []
+        self.alert_manager = MagicMock()
+        self.server = WebServer(self.poller, self.api, self.alert_manager, port=0)
+
+    def test_invalid_date_raises_value_error(self):
+        """Test invalid dates use the handler's HTTP 400 path."""
+        with self.assertRaises(ValueError):
+            self.server.api_flights({"date": ["../../../evil"]})
+        with self.assertRaises(ValueError):
+            self.server.api_search({"date": ["bad"]})
+
+    def test_non_today_api_failure_returns_empty_list(self):
+        """Test historical API failure does not leak today's records."""
+        self.poller.today_records = [{"flight_number": "TODAY"}]
+        self.api.fetch_flights.return_value = None
+        result = self.server.api_flights({"date": ["2020-01-01"]})
+        self.assertEqual(result, [])
+
+    def test_server_can_start_and_stop(self):
+        """Test server lifecycle releases its socket."""
+        self.assertTrue(self.server.start())
+        self.assertTrue(self.server.running())
+        port = self.server._server.server_address[1]
+        self.server.stop()
+        self.assertFalse(self.server.running())
+        self.assertTrue(self.server.start())
+        self.assertNotEqual(self.server._server.server_address[1], 0)
+        self.assertTrue(port >= 0)
+        self.server.stop()
+
+    def test_web_handler_returns_expected_error_statuses(self):
+        """Test HTTP handler maps invalid dates and unknown routes correctly."""
+        import urllib.error
+        import urllib.request
+
+        self.assertTrue(self.server.start())
+        port = self.server._server.server_address[1]
+        try:
+            with self.assertRaises(urllib.error.HTTPError) as bad_date:
+                urllib.request.urlopen(
+                    "http://127.0.0.1:{}/api/flights?date=../../../evil".format(port)
+                )
+            self.assertEqual(bad_date.exception.code, 400)
+
+            with self.assertRaises(urllib.error.HTTPError) as unknown:
+                urllib.request.urlopen("http://127.0.0.1:{}/api/stream".format(port))
+            self.assertEqual(unknown.exception.code, 404)
+        finally:
+            self.server.stop()
+
+
+class TestCursesTUI(unittest.TestCase):
+    """Test curses TUI mode dispatch and filter input."""
+
+    def setUp(self):
+        self.screen = FakeCursesScreen()
+        self.api = MagicMock()
+        self.api.fetch_airlines.return_value = []
+        self.poller = MagicMock()
+        self.poller.today_records = []
+        self.alert_manager = MagicMock()
+        self.alert_manager.active_count.return_value = 0
+        self.alert_manager.get_active.return_value = []
+        self.tui = CursesTUI(self.screen, self.poller, self.api, self.alert_manager, None)
+
+    def test_alert_and_airline_modes_render_their_views(self):
+        """Test modes dispatch to their dedicated renderers."""
+        self.tui.set_mode("alerts")
+        self.tui.render()
+        self.assertTrue(any("Active Alerts" in str(args) for args in self.screen.lines))
+
+        self.tui.set_mode("airlines")
+        self.tui.render()
+        self.assertTrue(any("Airlines" in str(args) for args in self.screen.lines))
+
+    def test_printable_filter_and_escape(self):
+        """Test printable input, backspace, and Escape behavior."""
+        import curses
+        self.tui.handle_key(ord("C"))
+        self.tui.handle_key(ord("X"))
+        self.assertEqual(self.tui.filter_text, "CX")
+        self.tui.handle_key(curses.KEY_BACKSPACE)
+        self.assertEqual(self.tui.filter_text, "C")
+        self.tui.handle_key(27)
+        self.assertEqual(self.tui.filter_text, "")
 
 
 class TestSearchFlights(unittest.TestCase):
@@ -942,7 +1133,6 @@ class TestPaginateRecords(unittest.TestCase):
 
     def _run(self, records, inputs):
         import io
-        from contextlib import redirect_stdout
         from hkg_flight.cli import paginate_records
 
         buf = io.StringIO()

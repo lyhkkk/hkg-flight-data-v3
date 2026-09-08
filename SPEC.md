@@ -6,9 +6,14 @@ A self-contained Python information retrieval system for Hong Kong International
 
 ## 2. Architecture
 
+The implementation is a Python package under `hkg_flight/`, executed with
+`python -m hkg_flight`. Older single-file diagrams and commands below are
+historical and should be read as logical components rather than current file
+names.
+
 ```
 ┌─────────────────────────────────────────────────┐
-│                   hkg_flight.py                  │
+│                   hkg_flight/                    │
 │  ┌───────────┐  ┌────────────┐  ┌────────────┐  │
 │  │  Backend   │  │  Frontend  │  │ Web Server │  │
 │  │ (poller+   │  │  (TUI)     │  │ (toggle)   │  │
@@ -135,10 +140,10 @@ gate/stand change detected
 ### 5.1 Entry Point
 
 ```bash
-python hkg_flight.py              # Start TUI (default)
-python hkg_flight.py --web        # Start web server
-python hkg_flight.py --port 8080  # Web on custom port
-python hkg_flight.py --no-poll    # Disable live polling
+python -m hkg_flight              # Start TUI (default)
+python -m hkg_flight web           # Start web server
+python -m hkg_flight web --port 8080
+python -m hkg_flight tui --no-poll # Disable live polling
 ```
 
 ### 5.2 TUI Layout
@@ -235,26 +240,24 @@ In any list view, type to filter:
 | `/api/alerts` | GET | Active alerts |
 | `/api/stats` | GET | Statistics |
 | `/api/airlines` | GET | Airlines list |
-| `/api/stream` | GET | SSE stream for real-time updates |
 
 ### 6.3 Web UI
 
 Single-page dark theme matching HKIA brand colors (#0f1923 background, #faa718 accent). Features:
 - Search by flight number
 - Filter by date, status, terminal
-- Real-time alert banner
-- Auto-refresh via SSE
+- Auto-refresh via 30-second browser polling
 
 ## 7. CLI Query Mode
 
 Quick one-shot queries without TUI:
 
 ```bash
-python hkg_flight.py query CX759              # Search flight
-python hkg_flight.py query CX759 2026-08-16   # Search with date
-python hkg_flight.py departures               # Today's departures
-python hkg_flight.py arrivals                 # Today's arrivals
-python hkg_flight.py alerts                   # Show active alerts
+python -m hkg_flight query CX759              # Search flight
+python -m hkg_flight query CX759 2026-08-16   # Search with date
+python -m hkg_flight departures               # Today's departures
+python -m hkg_flight arrivals                 # Today's arrivals
+python -m hkg_flight alerts                   # Show active alerts
 ```
 
 ## 8. File Structure
@@ -262,12 +265,13 @@ python hkg_flight.py alerts                   # Show active alerts
 ```
 hkg-flight-data-v3/
 ├── SPEC.md                    # This file
-├── hkg_flight.py              # Main entry point (single file)
+├── hkg_flight/                # Main package and module entry point
 ├── README.md                  # Usage documentation
-└── examples/                  # Example outputs
+├── test_hkg_flight.py         # Standard-library unittest suite
+└── cleanup_alerts.py           # Alert maintenance utility
 ```
 
-Single-file design for easy deployment (like Termux). All classes and functions in one `.py` file, organized into clear sections with headers.
+The package is standard-library-only and can be run directly from a checkout with `python -m hkg_flight`. The diagram above describes logical components; the implementation is split across the modules under `hkg_flight/`.
 
 ## 9. Dependencies
 

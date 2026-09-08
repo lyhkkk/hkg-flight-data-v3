@@ -4,7 +4,6 @@ Background polling for flight data updates.
 """
 
 import threading
-import time
 from datetime import datetime
 
 from .utils import log, normalize_flights
@@ -112,27 +111,3 @@ class Poller(object):
 
         log("Refreshed {} flights for {}".format(len(new_records), date_str))
         return new_records
-
-    @staticmethod
-    def _make_snapshot(rec, now):
-        """Create a state snapshot for change detection."""
-        return {
-            "key": rec.get("key", ""),
-            "flight_number": rec.get("flight_number", ""),
-            "date": rec.get("date", ""),
-            "time": rec.get("time", ""),
-            "type": rec.get("type", ""),
-            "status": rec.get("status", ""),
-            "gate": rec.get("gate", ""),
-            "stand": rec.get("stand", ""),
-            "last_seen": now.isoformat(timespec="seconds"),
-        }
-
-    @staticmethod
-    def _snapshot_changed(old, new):
-        """Check if relevant fields changed."""
-        fields = ["gate", "stand", "status", "time"]
-        for field in fields:
-            if old.get(field) != new.get(field):
-                return True
-        return False

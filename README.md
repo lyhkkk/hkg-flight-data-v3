@@ -4,7 +4,7 @@ A flight information retrieval system for Hong Kong International Airport (HKIA)
 It uses only the Python 3.7+ standard library and provides:
 
 - Curses TUI (with a plain-text fallback for terminals without curses)
-- Web dashboard with auto-refresh
+- Web dashboard with 30-second auto-refresh polling
 - CLI commands for searching flights and listing departures/arrivals
 
 ## Requirements
@@ -104,8 +104,11 @@ While viewing a flight list:
 | `Backspace` | Remove the last filter character |
 | `Esc` | Clear the current filter / go back |
 | `←` / `→` | Previous / next page |
-| `↑` / `↓` | Scroll through the current page |
 | `Home` / `End` | Jump to first / last page |
+
+Note: `1`, `2`, `5`, `6`, `W` and `Q` are view shortcuts and cannot be typed
+into the filter. In the curses TUI, other printable characters are appended to
+this filter; Backspace removes the last character and Escape clears it.
 
 In terminals without curses support, a simpler text menu is used; follow the
 on-screen prompts.
@@ -119,7 +122,7 @@ python -m hkg_flight web [--port N]
 ```
 
 The dashboard is available at `http://127.0.0.1:PORT` (default `8080`). It
-auto-refreshes via SSE and exposes JSON API endpoints such as:
+auto-refreshes every 30 seconds and exposes JSON API endpoints such as:
 
 - `/api/flights`
 - `/api/search`
@@ -143,4 +146,4 @@ Run the test suite:
 python -m unittest test_hkg_flight
 ```
 
-All 70 tests should pass.
+All 82 tests should pass.

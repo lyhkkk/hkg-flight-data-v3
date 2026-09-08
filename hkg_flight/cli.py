@@ -8,25 +8,18 @@ import re
 import sys
 import os
 import time
-import threading
-from datetime import date, datetime, timedelta
 
-from .cache import CacheSystem, DEFAULT_CACHE_DIR, DEFAULT_MIN_API_INTERVAL, DEFAULT_WEB_PORT
-from .api import APIClient, API_BASE
+from .cache import CacheSystem, DEFAULT_CACHE_DIR, DEFAULT_WEB_PORT
+from .api import APIClient
 from .alerts import AlertManager
 from .utils import (
     today_str,
     normalize_flight_number,
-    make_flight_key,
     route_text,
     gate_stand_text,
-    format_time,
     log,
-    get_status_info,
-    status_pair,
     normalize_flights,
     sort_flights,
-    filter_records,
 )
 
 
@@ -264,8 +257,7 @@ def clear_cache(cache, date_str=None, confirm=False):
             if response.lower() != "yes":
                 print("Cancelled.")
                 return
-        
-        import shutil
+
         if os.path.exists(cache_dir):
             # Delete files individually instead of rmtree
             for filename in os.listdir(cache_dir):
@@ -316,9 +308,9 @@ def print_flight_table(records, title):
         time_str = rec.get("time", "--:--")
         flight = rec.get("flight_number", "N/A")
         reg = rec.get("registration", "-")
-        route = route_text(rec)
-        status = rec.get("status", "N/A")
-        gs = gate_stand_text(rec)
+        route = route_text(rec)[:20]
+        status = rec.get("status", "N/A")[:18]
+        gs = gate_stand_text(rec)[:12]
         term = rec.get("terminal", "-")
 
         print("{:<6} {:<10} {:<6} {:<20} {:<18} {:<12} {:<5}".format(
@@ -371,9 +363,9 @@ def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE, input_func=inp
             print("{:<6} {:<10} {:<20} {:<18} {:<12} {:<5}".format(
                 rec.get("time", "--:--"),
                 rec.get("flight_number", "N/A"),
-                route_text(rec),
-                rec.get("status", "N/A"),
-                gate_stand_text(rec),
+                route_text(rec)[:20],
+                rec.get("status", "N/A")[:18],
+                gate_stand_text(rec)[:12],
                 rec.get("terminal", "-") or "-",
             ))
 
@@ -510,9 +502,9 @@ def cmd_tui(args, poller, api, alert_manager, web_server):
         print("TUI module not available.")
         return 1
 
-    # Try curses TUI first, fall back to simple TUI
+    # Try curses TUI first, fall back to simple TUI.
+    # start_tui imports curses at call time, so ImportError remains the probe.
     try:
-        import curses
         start_tui(poller, api, alert_manager, web_server)
     except ImportError:
         print("curses not available, using simple TUI")
@@ -538,7 +530,7 @@ def create_parser():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force refresh (clear cache before fetching)"
+        help="Bypass cached data (fetch fresh from the API)"
     )
     
     # Subcommands
@@ -591,10 +583,10 @@ def main(argv=None):
     api = APIClient(cache=cache)
     alert_manager = AlertManager(cache=cache)
     
-    # Force refresh: clear cache first
+    # Force refresh: bypass cached data for this run (cache files untouched)
     if args.force:
-        print("Force refresh: clearing cache...")
-        clear_cache(cache, confirm=True)
+        api.bypass_cache = True
+        print("Force refresh: bypassing cache for this run")
     
     # Handle commands
     if args.command == "query":

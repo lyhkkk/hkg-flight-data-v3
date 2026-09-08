@@ -5,13 +5,11 @@ Manages on-disk caching of flight data.
 
 import json
 import os
-import re
-import sys
 import threading
 import time
 from datetime import datetime
 
-from .utils import normalize_flight_number, log
+from .utils import normalize_flight_number, log, validate_date
 
 
 # Default cache directory
@@ -22,13 +20,6 @@ DEFAULT_MIN_API_INTERVAL = 0.6
 
 # Default web server port
 DEFAULT_WEB_PORT = 8080
-
-
-def _validate_date(date_str):
-    """Validate date string format (YYYY-MM-DD). Returns True if valid."""
-    if not isinstance(date_str, str):
-        return False
-    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_str))
 
 
 def _safe_cache_path(cache_dir, filename):
@@ -70,7 +61,7 @@ class CacheSystem(object):
     # -- paths ------------------------------------------------------------
     def flight_path(self, date_str):
         """Get cache path for a specific date. Returns None if date is invalid."""
-        if not _validate_date(date_str):
+        if not validate_date(date_str):
             log("Invalid date format: {}".format(date_str))
             return None
         return _safe_cache_path(self.cache_dir, "flights_{}.json".format(date_str))

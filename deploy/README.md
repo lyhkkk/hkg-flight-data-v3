@@ -26,10 +26,10 @@ python --version  # 需要 3.7+
 python -m hkg_flight
 
 # 启动 Web 服务器
-python -m hkg_flight --web
+python -m hkg_flight web
 
 # 指定端口
-python -m hkg_flight --web --port 9000
+python -m hkg_flight web --port 9000
 
 # CLI 查询
 python -m hkg_flight query CX759
@@ -49,7 +49,7 @@ python -m hkg_flight alerts
 ```batch
 @echo off
 cd /d "O:\lyh\Projects\hkia\hkg-flight-data-v3"
-start "HKG Flight Data" python -m hkg_flight --web --port 8080
+start "HKG Flight Data" python -m hkg_flight web --port 8080
 ```
 
 #### 使用任务计划程序
@@ -58,7 +58,7 @@ start "HKG Flight Data" python -m hkg_flight --web --port 8080
 2. 创建基本任务
 3. 设置触发器（例如：登录时）
 4. 操作：启动程序 `python`
-5. 参数：`-m hkg_flight --web --port 8080`
+5. 参数：`-m hkg_flight web --port 8080`
 6. 起始于：`O:\lyh\Projects\hkia\hkg-flight-data-v3`
 
 ### Linux/macOS 部署
@@ -76,7 +76,7 @@ After=network.target
 Type=simple
 User=youruser
 WorkingDirectory=/path/to/hkg-flight-data-v3
-ExecStart=/usr/bin/python3 -m hkg_flight --web --port 8080
+ExecStart=/usr/bin/python3 -m hkg_flight web --port 8080
 Restart=on-failure
 RestartSec=30
 
@@ -96,7 +96,7 @@ sudo systemctl status hkg-flight
 
 ```bash
 cd /path/to/hkg-flight-data-v3
-nohup python3 -m hkg_flight --web --port 8080 > hkg_flight.log 2>&1 &
+nohup python3 -m hkg_flight web --port 8080 > hkg_flight.log 2>&1 &
 ```
 
 ### Docker 部署
@@ -113,7 +113,7 @@ COPY README.md .
 
 EXPOSE 8080
 
-CMD ["python", "-m", "hkg_flight", "--web", "--port", "8080"]
+CMD ["python", "-m", "hkg_flight", "web", "--port", "8080"]
 ```
 
 构建并运行：
@@ -169,7 +169,7 @@ python cleanup_alerts.py --clear-all --apply
 ### 运行测试
 
 ```bash
-python test_hkg_flight.py
+python -m unittest test_hkg_flight
 ```
 
 ### 日志
@@ -177,7 +177,7 @@ python test_hkg_flight.py
 Web 服务器日志输出到 stderr。在 Linux 上可以重定向：
 
 ```bash
-python -m hkg_flight --web 2>&1 | tee hkg_flight.log
+python -m hkg_flight web 2>&1 | tee hkg_flight.log
 ```
 
 ## 故障排除
