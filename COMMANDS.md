@@ -7,7 +7,8 @@
 ```bash
 # 查询航班（默认排除代码共享）
 python -m hkg_flight query <航班号> [日期]
-python -m hkg_flight query CX759
+python -m hkg_flight query CX759              # 紧凑单行输出
+python -m hkg_flight query CX759 --details   # 完整航班信息
 python -m hkg_flight query CX759 2026-09-07
 python -m hkg_flight query BA15       # 短航班号按航班号匹配
 python -m hkg_flight query W63        # 查询停机位
@@ -256,7 +257,8 @@ options:
 | 数字（如 `3`） | 跳转到第 3 页 |
 | `q` | 退出分页器 |
 
-结果不超过 10 条的精确航班号查询（如 `query CX759`）仍显示详细信息。
+默认查询使用紧凑的单行表格；例如 `query CX759` 只显示一行航班摘要。
+需要完整字段时使用 `query CX759 --details` 或 `query CX759 -d`。
 
 ---
 

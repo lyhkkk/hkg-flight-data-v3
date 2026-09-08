@@ -313,34 +313,56 @@ def print_flight_details(rec, index=None):
         print("Aircraft: {}".format(rec.get("aircraft_type")))
 
 
-def print_flight_table(records, title):
-    """Print a table of flights."""
+def format_flight_row(rec, include_registration=False):
+    """Format one compact flight row for CLI list output."""
+    columns = [
+        rec.get("time", "--:--"),
+        rec.get("flight_number", "N/A"),
+    ]
+    if include_registration:
+        columns.append(rec.get("registration", "-") or "-")
+    columns.extend([
+        route_text(rec)[:20],
+        rec.get("status", "N/A")[:18],
+        gate_stand_text(rec)[:12],
+        rec.get("terminal", "-") or "-",
+    ])
+    widths = [6, 10]
+    if include_registration:
+        widths.append(6)
+    widths.extend([20, 18, 12, 5])
+    return " ".join("{:<{}}".format(value, width) for value, width in zip(columns, widths)).rstrip()
+
+
+def print_compact_flights(records, title, include_registration=False, max_rows=None):
+    """Print flights as one compact row per flight."""
     if not records:
         print("No flights found.")
         return
 
+    displayed = records if max_rows is None else records[:max_rows]
     print("\n{} — {} flight(s)".format(title, len(records)))
     print()
-    print("{:<6} {:<10} {:<6} {:<20} {:<18} {:<12} {:<5}".format(
-        "TIME", "FLIGHT", "REG", "ROUTE", "STATUS", "GATE/STAND", "TERM"
-    ))
-    print("-" * 80)
+    headers = ["TIME", "FLIGHT"]
+    if include_registration:
+        headers.append("REG")
+    headers.extend(["ROUTE", "STATUS", "GATE/STAND", "TERM"])
+    widths = [6, 10]
+    if include_registration:
+        widths.append(6)
+    widths.extend([20, 18, 12, 5])
+    print(" ".join("{:<{}}".format(header, width) for header, width in zip(headers, widths)).rstrip())
+    print("-" * (sum(widths) + len(widths) - 1))
+    for rec in displayed:
+        print(format_flight_row(rec, include_registration=include_registration))
 
-    for rec in records[:50]:  # Limit to 50 rows
-        time_str = rec.get("time", "--:--")
-        flight = rec.get("flight_number", "N/A")
-        reg = rec.get("registration", "-")
-        route = route_text(rec)[:20]
-        status = rec.get("status", "N/A")[:18]
-        gs = gate_stand_text(rec)[:12]
-        term = rec.get("terminal", "-")
+    if len(displayed) < len(records):
+        print("\n... and {} more flights".format(len(records) - len(displayed)))
 
-        print("{:<6} {:<10} {:<6} {:<20} {:<18} {:<12} {:<5}".format(
-            time_str, flight, reg, route, status, gs, term
-        ))
 
-    if len(records) > 50:
-        print("\n... and {} more flights".format(len(records) - 50))
+def print_flight_table(records, title):
+    """Print flights in the compact one-row-per-flight format."""
+    print_compact_flights(records, title, include_registration=True, max_rows=50)
 
 
 def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE, input_func=input):
@@ -382,14 +404,7 @@ def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE, input_func=inp
         print("-" * 80)
 
         for rec in records[start:end]:
-            print("{:<6} {:<10} {:<20} {:<18} {:<12} {:<5}".format(
-                rec.get("time", "--:--"),
-                rec.get("flight_number", "N/A"),
-                route_text(rec)[:20],
-                rec.get("status", "N/A")[:18],
-                gate_stand_text(rec)[:12],
-                rec.get("terminal", "-") or "-",
-            ))
+            print(format_flight_row(rec))
 
         print("\nPage {}/{} — [Enter/N]ext [P]rev [Q]uit, or type a page number".format(
             page, total_pages
@@ -422,7 +437,10 @@ def cmd_query(args, api):
     results = search_flights(api, args.flight, args.date, include_codeshare=args.codeshare)
 
     if results:
-        if _is_airline_code(args.flight) or len(results) > DEFAULT_PAGE_SIZE:
+        if args.details:
+            for i, rec in enumerate(results, 1):
+                print_flight_details(rec, i)
+        elif _is_airline_code(args.flight) or len(results) > DEFAULT_PAGE_SIZE:
             # Airline code search (e.g. CX) or large result set:
             # compact list, 10 flights per page with N/P navigation
             paginate_records(
@@ -431,8 +449,10 @@ def cmd_query(args, api):
                 page_size=DEFAULT_PAGE_SIZE,
             )
         else:
-            for i, rec in enumerate(results, 1):
-                print_flight_details(rec, i)
+            print_compact_flights(
+                results,
+                "{} flights {}".format(args.flight.upper(), args.date or ""),
+            )
     else:
         print("No flights found for '{}'".format(args.flight))
 
@@ -566,6 +586,7 @@ def create_parser():
     )
     query_parser.add_argument("date", nargs="?", default=None, help="Date in YYYY-MM-DD format (default: D-1, D, D+1)")
     query_parser.add_argument("--codeshare", action="store_true", help="Include codeshare flights")
+    query_parser.add_argument("--details", "-d", action="store_true", help="Show detailed flight information")
     
     # departures command
     departures_parser = subparsers.add_parser("departures", help="List departures")

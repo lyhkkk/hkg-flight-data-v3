@@ -36,7 +36,8 @@ python -m hkg_flight tui --no-poll
 
 ```bash
 # Search for a flight by flight number (e.g. CX759)
-python -m hkg_flight query CX759
+python -m hkg_flight query CX759              # Compact one-line result
+python -m hkg_flight query CX759 --details   # Full flight details
 
 # Search for a flight on a specific date
 python -m hkg_flight query CX759 2026-08-16
@@ -81,7 +82,7 @@ If no date is given for `departures` / `arrivals`, the current date is used.
 ### Query output & pagination
 
 When a query matches an airline code (e.g. `query CX`) or returns more than 10
-flights, results are shown as a compact list with **10 flights per page**:
+flights, results are shown as a compact one-line table with **10 flights per page**:
 
 | Key / Input | Action |
 | --- | --- |
@@ -89,6 +90,9 @@ flights, results are shown as a compact list with **10 flights per page**:
 | `p` | Previous page |
 | `1`-`9`... | Jump to page number |
 | `q` | Quit the pager |
+
+For a single flight, the default query output is also one compact row. Use
+`query <flight> --details` (or `-d`) when the labeled full view is needed.
 
 ## TUI Controls
 

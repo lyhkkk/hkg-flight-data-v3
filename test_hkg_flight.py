@@ -9,10 +9,12 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import MagicMock, patch
+from io import StringIO
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from hkg_flight.cli import format_flight_row, print_compact_flights
 from hkg_flight import (
     CacheSystem,
     APIClient,
@@ -60,6 +62,64 @@ class FakeCursesScreen:
 
     def refresh(self):
         pass
+
+
+class TestCLICompactOutput(unittest.TestCase):
+    """Test compact one-line CLI output and details compatibility."""
+
+    def _record(self):
+        return {
+            "time": "08:40",
+            "flight_number": "CX759",
+            "registration": "B-KQA",
+            "origin": "HKG",
+            "destination": "SIN",
+            "route": "HKG → SIN",
+            "status": "Boarding",
+            "gate": "63",
+            "stand": "",
+            "terminal": "T1",
+            "type": "departure",
+        }
+
+    def test_format_flight_row_is_single_line(self):
+        """A flight is represented by one compact table row."""
+        row = format_flight_row(self._record())
+
+        self.assertNotIn("\n", row)
+        self.assertIn("08:40", row)
+        self.assertIn("CX759", row)
+        self.assertIn("HKG", row)
+        self.assertIn("SIN", row)
+        self.assertIn("Boarding", row)
+        self.assertIn("Gate 63", row)
+        self.assertIn("T1", row)
+
+    def test_compact_output_has_one_row_per_record(self):
+        """Compact output renders each record once."""
+        output = StringIO()
+        with redirect_stdout(output):
+            print_compact_flights([self._record(), self._record()], "Flights")
+
+        lines = output.getvalue().splitlines()
+        data_lines = [line for line in lines if "CX759" in line]
+        self.assertEqual(len(data_lines), 2)
+
+    def test_details_flag_is_available_for_query(self):
+        """The query parser exposes the opt-in detailed view."""
+        from hkg_flight.cli import create_parser
+
+        args = create_parser().parse_args(["query", "CX759", "--details"])
+        self.assertTrue(args.details)
+
+    def test_table_keeps_large_result_guard(self):
+        """Non-paginated tables retain the existing 50-row output limit."""
+        output = StringIO()
+        with redirect_stdout(output):
+            print_compact_flights([self._record()] * 51, "Flights", max_rows=50)
+
+        self.assertEqual(output.getvalue().count("CX759"), 50)
+        self.assertIn("... and 1 more flights", output.getvalue())
 
 
 class TestSimpleTUIColor(unittest.TestCase):

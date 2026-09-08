@@ -255,11 +255,14 @@ Single-page dark theme matching HKIA brand colors (#0f1923 background, #faa718 a
 
 ## 7. CLI Query Mode
 
-Quick one-shot queries without TUI:
+Quick one-shot queries without TUI. Query results use one compact row per
+flight by default; pass `--details` or `-d` for the labeled full view. Large
+result sets and airline-code searches retain the 10-row interactive pager.
 
 ```bash
-python -m hkg_flight query CX759              # Search flight
-python -m hkg_flight query CX759 2026-08-16   # Search with date
+python -m hkg_flight query CX759              # Compact one-line result
+python -m hkg_flight query CX759 --details   # Full flight details
+python -m hkg_flight query CX759 2026-08-16   # Compact result for date
 python -m hkg_flight departures               # Today's departures
 python -m hkg_flight arrivals                 # Today's arrivals
 python -m hkg_flight alerts                   # Show active alerts
