@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HKG Flight Data v3 — 复审报告 v5（03fa20c）</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c232c; --border:rgba(255,255,255,.09);
+  --text:#e6edf3; --muted:#8b98a9; --accent:#faa718;
+  --ok:#4ade80; --warn:#f59e0b; --bad:#ef4444; --info:#58a6ff;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;padding:32px 20px 80px}
+.wrap{max-width:1080px;margin:0 auto}
+header{border-bottom:1px solid var(--border);padding-bottom:24px;margin-bottom:26px}
+h1{font-size:1.85rem;letter-spacing:-.02em} h1 span{color:var(--accent)}
+.sub{color:var(--muted);font-size:.87rem;margin-top:8px;font-family:var(--mono)}
+h2{font-size:1.2rem;margin:38px 0 13px;padding-left:12px;border-left:3px solid var(--accent)}
+h2.ok{border-left-color:var(--ok)} h2.new{border-left-color:var(--warn)} h2.todo{border-left-color:var(--bad)}
+p{margin:10px 0;color:#c9d4e0}
+.verdict{background:linear-gradient(90deg,rgba(250,167,24,.1),transparent);border:1px solid rgba(250,167,24,.25);border-radius:10px;padding:16px 20px;margin:18px 0}
+.delta{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:11px;margin:20px 0}
+.d{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:13px 15px}
+.d .t{font-size:.76rem;color:var(--muted);letter-spacing:.05em}
+.d .n{font-size:1.4rem;font-weight:700;font-family:var(--mono);margin-top:4px}
+.up{color:var(--ok)} .mid{color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:.87rem;margin:13px 0}
+th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--accent);font-weight:600;background:var(--panel2)}
+code{font-family:var(--mono);font-size:.82rem;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px}
+.f{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:15px 18px;margin:12px 0}
+.f.new{border-left:3px solid var(--warn)} .f.todo{border-left:3px solid var(--bad)}
+.f h4{font-size:.98rem;display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px}
+.badge{font-size:.68rem;font-family:var(--mono);padding:2px 7px;border-radius:4px;font-weight:700}
+.b-p1{background:rgba(239,68,68,.16);color:#ff8f8f;border:1px solid rgba(239,68,68,.35)}
+.b-p2{background:rgba(245,158,11,.14);color:#fcc46b;border:1px solid rgba(245,158,11,.3)}
+.b-p3{background:rgba(88,166,255,.13);color:#8fc4ff;border:1px solid rgba(88,166,255,.3)}
+.loc{font-family:var(--mono);font-size:.77rem;color:var(--muted);margin-bottom:7px}
+.f p{font-size:.91rem;margin:6px 0}
+pre{background:#0a0e13;border:1px solid var(--border);border-radius:8px;padding:11px 14px;overflow-x:auto;font-family:var(--mono);font-size:.79rem;line-height:1.6;margin:9px 0;color:#c9d4e0}
+pre .c{color:#6b7a8f} pre .r{color:#ff9090} pre .g{color:#7ee8a5}
+.ev{background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.18);border-radius:7px;padding:9px 13px;font-size:.85rem;margin-top:9px;font-family:var(--mono);color:#a8dcc0}
+.fixbox{background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.2);border-radius:7px;padding:9px 13px;font-size:.87rem;margin-top:9px}
+.fixbox b{color:var(--info)}
+.box{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:15px 19px;margin:14px 0}
+table.check td:first-child{width:30px;text-align:center;font-weight:700}
+td.y{color:var(--ok)} td.n{color:var(--bad)} td.h{color:var(--warn)}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:.81rem;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>HKG Flight Data v3 — <span>复审报告 v5</span></h1>
+  <div class="sub">基线 8beb22f → 目标 03fa20c（6 个提交）· 2026-09-08 · 只读审查，未改动任何项目文件</div>
+</header>
+
+<div class="verdict">
+  <p><strong>结论：上轮 18 项待办（6 新引入 + 12 未处理）已闭环 15 项，工程化从零补齐，整体可以从"补全"阶段毕业。</strong></p>
+  <p style="margin-bottom:0">curses TUI 三大遗留、SSE 假推送、告警无限增长、25 处未用导入、CLI 表格错位全部修掉；新增 <code>pyproject.toml</code> + GitHub Actions（3.7/3.11/3.13 矩阵 + ruff）。同时新增了停机位 / 登机门 / 航司代码搜索与结果分页。<strong style="color:#ff9090">但新功能引入了一个会静默返回错误结果的判定 bug</strong>（2 字母 + 1~2 位数字的航班号被当成停机位），且新增的 curses 测试在 Windows 下会失败——这两项建议优先处理。</p>
+</div>
+
+<div class="delta">
+  <div class="d"><div class="t">安全 SECURITY</div><div class="n"><span style="color:var(--muted)">B+</span> → <span class="up">A-</span></div></div>
+  <div class="d"><div class="t">实用 UTILITY</div><div class="n"><span style="color:var(--muted)">B</span> → <span class="up">B+</span></div></div>
+  <div class="d"><div class="t">简洁 SIMPLICITY</div><div class="n"><span style="color:var(--muted)">C</span> → <span class="up">B+</span></div></div>
+  <div class="d"><div class="t">美观 AESTHETICS</div><div class="n"><span style="color:var(--muted)">B+</span> → <span class="up">A-</span></div></div>
+  <div class="d"><div class="t">可维护性</div><div class="n"><span style="color:var(--muted)">C+</span> → <span class="up">A-</span></div></div>
+  <div class="d"><div class="t">测试规模</div><div class="n up">58 → 82</div></div>
+</div>
+
+<h2 class="ok">一、上轮待办闭环情况（18 项 → 已闭环 15）</h2>
+
+<h3 style="color:var(--ok)">v2 新引入问题（N1–N6）：全部修复</h3>
+<table class="check">
+<tr><th></th><th>问题</th><th>修复方式</th></tr>
+<tr><td class="y">✓</td><td>N1 <code>_validate_date</code> 三处重复</td><td>收敛为 <code>utils.validate_date()</code>，api/cache/web 统一 import</td></tr>
+<tr><td class="y">✓</td><td>N2 Python <code>_esc()</code> 死代码</td><td>已删除（转义统一由前端 <code>esc()</code> 负责）</td></tr>
+<tr><td class="y">✓</td><td>N3 <code>shutil</code> 死导入</td><td>已删除</td></tr>
+<tr><td class="y">✓</td><td>N4 参数错误返回 HTTP 200</td><td>改抛 <code>ValueError</code> → handler 返回 <strong>400</strong>；前端加 <code>res.ok</code> 与 <code>Array.isArray</code> 校验</td></tr>
+<tr><td class="y">✓</td><td>N5 文档记载跑不通的 <code>web --force</code></td><td>改为 <code>--force web</code>，并明确加注"全局选项必须写在子命令之前"</td></tr>
+<tr><td class="y">✓</td><td>N6 <code>--force</code> 清空整个缓存</td><td>改为 <code>api.bypass_cache = True</code>，不再触碰磁盘（含 alerts.json）</td></tr>
+</table>
+
+<h3 style="color:var(--ok);margin-top:18px">v2 未处理项（U1–U12）：修复 10 项</h3>
+<table class="check">
+<tr><th></th><th>问题</th><th>修复方式</th></tr>
+<tr><td class="y">✓</td><td><strong>U1 curses 5/6 键空白</strong>（最严重遗留）</td><td><code>render()</code> 按 mode 分发到 <code>_render_alerts/_render_airlines/_render_flights</code></td></tr>
+<tr><td class="y">✓</td><td>U2 curses 无法输入过滤文本</td><td>新增 <code>32 &lt;= ch &lt; 127</code> 追加字符 + Backspace 处理；顺带删掉 <code>ch in (ord("0"),)</code> 笔误与重复的 <code>elif ch == 27</code> 死分支</td></tr>
+<tr><td class="y">✓</td><td>U3 <code>scroll</code> 累加但从未使用</td><td>连同无效的 ↑/↓ 绑定一并删除，README 同步去掉滚动描述</td></tr>
+<tr><td class="y">✓</td><td>U4 <code>cmd_search/cmd_date</code> 死功能</td><td><code>cmd_search</code> 输入接入 <code>filter_text</code>；无用的 <code>cmd_date</code> 删除</td></tr>
+<tr><td class="y">✓</td><td>U5 SSE 只发心跳不推送</td><td>删除 <code>/api/stream</code> 端点与 <code>_clients</code> 列表，文档改述为"浏览器每 30 秒轮询"</td></tr>
+<tr><td class="y">✓</td><td>U6 告警 history 无上界</td><td><code>MAX_HISTORY = 500</code>，<code>save()</code> 时截断</td></tr>
+<tr><td class="y">✓</td><td>U7 <code>log()</code> 没有时间</td><td>改用 <code>datetime.now().strftime("%Y-%m-%d %H:%M:%S")</code></td></tr>
+<tr><td class="y">✓</td><td>U9 25 处未使用导入</td><td>实测已<strong>全部归零</strong></td></tr>
+<tr><td class="y">✓</td><td>U11 CLI 表格不截断导致错位</td><td>route/status/gate 分别截断 <code>[:20] [:18] [:12]</code></td></tr>
+<tr><td class="y">✓</td><td>U12 无 pyproject / 无 CI</td><td>新增 <code>pyproject.toml</code>（含 ruff 配置 + <code>hkg-flight</code> 入口）+ <code>.github/workflows/ci.yml</code></td></tr>
+<tr><td class="h">~</td><td>U10 死代码</td><td><strong>部分</strong>：<code>_attr</code>、<code>_make_snapshot/_snapshot_changed</code>、<code>APIClient._lock</code> 已删；<code>read_state/write_state</code>、<code>status_pair</code> 仍在</td></tr>
+<tr><td class="n">✗</td><td>U8 <code>Poller.stop()</code> join(5) &lt; wait(30)</td><td>未处理</td></tr>
+</table>
+
+<h3 style="margin-top:20px">额外加固（超出上轮清单，做得好的部分）</h3>
+<div class="box">
+<ul style="margin:0 0 0 18px">
+<li><strong>告警线程安全</strong>：<code>Lock → RLock</code>，<code>get_active/get_history/active_count/consume_new_flag</code> 全部加锁并 <code>deepcopy</code> 返回，杜绝外部拿到内部列表被并发改写；<code>_clear_for_key</code> 改为列表推导，去掉 O(n²) 的 <code>remove</code> 循环。</li>
+<li><strong>修掉一个真实数据 bug</strong>：<code>api_flights</code> 原逻辑「有 poller 就先用内存数据，非今日才去拉 API」，当 API 失败时会<strong>错误地把今日数据当成指定日期返回</strong>；现改为「poller 且 date == today 才用内存」，其余一律走 API。</li>
+<li><strong>web 线程耗尽风险消除</strong>：SSE 删除后不再有常驻线程。</li>
+<li><code>cmd_tui</code> 去掉多余的 <code>import curses</code> 探针，改为由 <code>start_tui</code> 抛出的 ImportError 判定。</li>
+</ul>
+</div>
+
+<h2>二、新增功能评估</h2>
+<table>
+<tr><th style="width:22%">功能</th><th>实现</th><th style="width:20%">评价</th></tr>
+<tr><td>停机位搜索 <code>W63</code></td><td><code>_is_stand()</code> 正则 + 精确匹配 stand 字段</td><td class="y">实用（机位看板场景）</td></tr>
+<tr><td>登机门搜索 <code>G28</code></td><td><code>_is_gate()</code> + 提取数字后比对 gate 字段</td><td class="y">实用</td></tr>
+<tr><td>航司代码搜索 <code>CX</code></td><td>匹配 airline_code 或航班号前缀；<code>--codeshare</code> 可覆盖代码共享</td><td class="y">实用，实测 335 条</td></tr>
+<tr><td>HKT 时段化日期范围</td><td>22-24 点查 D+D+1，00-02 点查 D-1+D，其余查 D</td><td class="y">切合机场实际，比原来无脑查 3 天更省请求</td></tr>
+<tr><td>结果分页器</td><td>默认 10 条/页，Enter/N/P/数字跳页/Q，<code>input_func</code> 可注入</td><td class="y">设计可测，解决了航司查询 300+ 条刷屏</td></tr>
+</table>
+
+<h2 class="new">三、新引入的问题（2 项 P1 + 2 项 P2）</h2>
+
+<div class="f new">
+  <h4>V1. 两字母 + 1~2 位数字的航班号被误判为「停机位」→ 静默返回 0 条 <span class="badge b-p1">P1</span></h4>
+  <div class="loc">cli.py:36 <code>_is_stand()</code> · search_flights() 模式判定</div>
+  <p><code>_is_stand</code> 的正则 <code>[A-Z]{1,2}\d{1,2}</code> 会命中所有「2 字母 + 1~2 位数字」的航班号，且判定优先级高于航班号匹配，<strong>没有任何兜底回退</strong>：</p>
+<pre>输入      stand   判定
+CX75      True    停机位   <span class="r">← 本应是航班号</span>
+BA15      True    停机位   <span class="r">← 真实航班号</span>
+KA21      True    停机位   <span class="r">← 真实航班号</span>
+HX22 / UO23 / SQ2 / JL26   全部误判
+CX759     False   航班号   <span class="g">（3 位数字不受影响）</span></pre>
+  <p>端到端复现（构造含 BA15 的数据源）：</p>
+<pre>query BA15 -&gt; <span class="r">0 条结果</span>   <span class="c"># 航班实际存在，却被拿去比对 stand 字段</span>
+query W63  -&gt; 1 条结果   <span class="g"># 停机位搜索本身正常</span></pre>
+  <p>危害是<strong>静默</strong>的：用户查一个存在的航班，得到 0 结果，会以为航班不存在。</p>
+  <div class="fixbox"><b>建议（三选一）：</b>① 给停机位加前缀限定，只认 HKIA 实际机位前缀（W/N/R/S/E + 数字，如 <code>[WNRSE]\d{1,3}</code>）；② 保留宽松正则，但当停机位/登机门搜索返回 0 条时<strong>回退</strong>按航班号再搜一次并提示；③ 加显式标识，如 <code>query stand:W63</code> / <code>--stand W63</code>，彻底消除歧义。</div>
+</div>
+
+<div class="f new">
+  <h4>V2. 新增 curses 测试未做平台跳过，Windows 下测试套件报红 <span class="badge b-p1">P1</span></h4>
+  <div class="loc">test_hkg_flight.py:798-833 <code>TestCursesTUI</code></div>
+  <p>两个新测试直接依赖 <code>curses</code>，而 Windows 的 CPython 没有 <code>_curses</code> 模块。在<strong>你自己的开发机</strong>上现在是这样：</p>
+<pre>$ python -m unittest test_hkg_flight
+Ran 82 tests in 1.869s
+<span class="r">FAILED (errors=2)</span>
+  ERROR: test_alert_and_airline_modes_render_their_views  ModuleNotFoundError: No module named '_curses'
+  ERROR: test_printable_filter_and_escape                ModuleNotFoundError: No module named '_curses'</pre>
+  <p>CI 跑在 <code>ubuntu-latest</code>，curses 存在，所以 CI 仍是绿的——但这意味着<strong>本地信号失真</strong>：上轮"58/58 全绿"的可信度被破坏了，而项目 README 本身就把 Windows + <code>windows-curses</code> 列为支持场景。</p>
+  <div class="fixbox"><b>建议：</b>给类加 <code>@unittest.skipUnless(_curses_available(), "requires curses")</code>（用 <code>importlib.util.find_spec("_curses")</code> 探测）。这样 Windows 显示 80 passed / 2 skipped，Linux 全量 82。</div>
+</div>
+
+<div class="f new">
+  <h4>V3. <code>--force</code> 实际只作用于航司缓存 <span class="badge b-p2">P2</span></h4>
+  <div class="loc">api.py:23,87,104 · cli.py:588</div>
+  <p><code>bypass_cache</code> 只在 <code>fetch_airlines()</code> 的两处读取分支生效；<code>fetch_flights()</code> 从头到尾<strong>不读缓存</strong>（缓存仅在 poller 里做降级兜底），所以 <code>--force</code> 对航班数据没有任何额外效果。帮助文本"Bypass cached data (fetch fresh from the API)"略有夸大。</p>
+  <div class="fixbox"><b>建议：</b>把帮助改成"Bypass cached airline data"；或让 <code>Poller.refresh_today()</code> 也尊重该标志，使其名副其实。</div>
+</div>
+
+<div class="f new">
+  <h4>V4. PROJECT-STATUS.md 的测试数量已过时 <span class="badge b-p2">P2</span></h4>
+  <div class="loc">PROJECT-STATUS.md:45「70 个测试全部通过」</div>
+  <p>实际收集并执行的是 <strong>82</strong> 个（新增了 TestCursesTUI / TestAirlineCodeSearch / TestPaginateRecords 等）。这类"文档里的数字"正是上一轮"58 个测试全部通过"失效记录的同类问题，建议改成从 CI 徽章读取，或干脆写"以 CI 结果为准"。</p>
+</div>
+
+<h2 class="todo">四、仍未处理（4 项，均为 P3）</h2>
+<table>
+<tr><th style="width:26%">位置</th><th>问题</th></tr>
+<tr><td>poller.py:50-55</td><td><code>stop()</code> 的 <code>join(timeout=5)</code> 仍短于线程 <code>wait(30)</code>，停止是"假成功"（靠 daemon 兜底）。建议把 <code>wait</code> 切片为 1s 轮询，或 join 超时提到 35s</td></tr>
+<tr><td>cache.py:143-151</td><td><code>read_state/write_state</code> 与 <code>state.json</code> 仍是零调用死代码</td></tr>
+<tr><td>utils.py:125-142 · __init__.py</td><td><code>status_pair()</code> 仍未被任何渲染逻辑使用（TUI 用的是自己的 if/elif），且映射与 <code>_setup_curses_colors</code> 不一致</td></tr>
+<tr><td>tui.py / cli.py</td><td>仍无条件输出 ANSI 颜色，缺 <code>--no-color</code> 与 <code>NO_COLOR</code> / <code>isatty()</code> 检测，管道与重定向会带乱码</td></tr>
+</table>
+
+<h2>五、下一步建议</h2>
+<table>
+<tr><th style="width:64px">优先级</th><th>动作</th><th style="width:30%">收益</th></tr>
+<tr><td><strong>1</strong></td><td>修 <code>_is_stand</code> 误判：收紧为 <code>[WNRSE]\d{1,3}</code>，并加"机位搜索 0 结果时回退航班号"的兜底</td><td>消除静默错误结果（约 3 行 + 1 个兜底分支）</td></tr>
+<tr><td><strong>2</strong></td><td>给 <code>TestCursesTUI</code> 加 <code>skipUnless</code> 平台守卫</td><td>Windows 本地恢复全绿信号，CI 不受影响</td></tr>
+<tr><td><strong>3</strong></td><td>PROJECT-STATUS 测试数量改为"以 CI 为准"；<code>--force</code> 帮助文本收窄</td><td>消除最后一处文档漂移</td></tr>
+<tr><td><strong>4</strong></td><td>清理 <code>read_state/write_state</code>、<code>status_pair</code>；修 <code>Poller.stop</code>；加 <code>--no-color</code></td><td>收尾，项目可稳定在 A-</td></tr>
+</table>
+
+<div class="box">
+  <p style="margin:0"><strong>整体评价：</strong>这一轮完成度很高——不只是打勾式修复，还顺手解决了两个清单外的问题（api_flights 的数据串味 bug、告警并发安全），工程化（pyproject + CI + ruff）也一次到位，未用导入实测归零。剩下 2 项 P1 都是"新功能的副作用"，属于正常迭代代价，改起来都不超过几行。修完这 4 条就可以收尾了。</p>
+</div>
+
+<footer>
+审查于 2026-09-08 · 目标提交 03fa20c · Python 3.13.12 / Windows · 只读审查，未改动任何项目文件<br>
+验证方式：unittest 全量（82 收集 / 2 errors）· git diff 逐文件比对 · 搜索模式判定矩阵 · 端到端 search_flights 复现 · 未用导入 AST 扫描（0 处）
+</footer>
+
+</div>
+</body>
+</html>

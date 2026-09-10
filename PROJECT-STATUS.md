@@ -1,8 +1,10 @@
 # HKG Flight Data v3 — Project Status
 
-> 最后更新: 2026-09-08
+> 最后更新: 2026-09-09
 
-## 项目状态: ✅ 运行正常
+## 项目状态: ⚠️ V3-G0-P 前置计划已纳入，V3 实施未完成
+
+> Rev 2 的既有功能描述不等于 V3 验收通过。当前 V3 已执行一次 `V3-G0-P` Python 运行时与自动化测试前置门，但因仅发现 Python 3.14.4、未发现目标 Python 3.7/3.11/3.13，结论为 `BLOCKED`；V3 G1-G5 未完成。Python 3.14 可做辅助 lane，但不能替代正式目标版本证据。详见 [V3 执行证据报告](TUI-REBUILD-EXECUTION-REPORT-v3.md)、[G0-P 前置计划](V3-G0-P-PREFLIGHT-PLAN.md) 与 [反馈记录](FEEDBACK-LOG.md)。
 
 ## 环境信息
 
@@ -32,6 +34,32 @@
 - **礼貌限速**: 0.6 秒/请求
 
 ## 最近完成的工作
+
+### 2026-09-09 — 终端工作台重建（TUI-REBUILD Rev 2，G0→G4）
+
+1. ✅ **决策冻结与风险验证（G0）**
+   - 实测 Textual 8.2.8（requires-python >=3.9,<4.0），headless `run_test` 通过
+   - 基础包保持 3.7 可解析；`py -3.7-32 -m compileall` 与 discover 通过
+   - 记录身份扩展为全字段投影（真实样本存在同日同方向重复航段）
+   - 缓存 mtime、API/航司失败元数据、`alerts_revision` 已落地
+
+2. ✅ **纵向骨架（G1）**
+   - `Session` 统一拥有轮询链/Web/航司加载；非阻塞首刷只触发一次
+   - 原子防御性快照（revision/records/source/时间/错误元数据）
+   - 真实 CLI 入口 `--ui auto|textual|plain`，统一 finally 清理
+
+3. ✅ **航班工作流（G2）**
+   - 离港/到达/告警/航司四页 + 详情 + 筛选面板 + 帮助
+   - 白名单搜索（词 AND、字段 OR、航班号去空格）、稳定选择、三档布局
+
+4. ✅ **运行场景（G3）**
+   - Web 端口占用报 ERROR、no-poll 仅手动刷新、迟到请求丢弃
+   - plain 降级与非 TTY 有限输出、NO_COLOR、跨午夜“上一数据日期”标记
+
+5. ✅ **验证与删除旧路径（G4）**
+   - 移除 `CursesTUI`/`run_simple_tui`/`FakeCursesScreen` 与 `hkg_flight/tui.py`
+   - `.[tui]` 可选安装组、`theme.tcss` 打包、CI 基线与增强矩阵
+   - 同步 README/COMMANDS/SPEC/PROJECT-STATUS
 
 ### 2026-09-08
 
@@ -79,7 +107,9 @@
 | 文件/目录 | 说明 |
 |------|------|
 | `hkg_flight/` | 主包目录 |
-| `test_hkg_flight.py` | 测试套件 |
+| `hkg_flight/terminal/` | 重建的终端工作台（session/state/presenter/views/plain/textual_app/theme.tcss） |
+| `tests/` | 终端测试套件与离线夹具 |
+| `test_hkg_flight.py` | 核心回归测试套件 |
 | `cleanup_alerts.py` | 告警清理脚本 |
 | `deploy/` | 部署文档 |
 | `README.md` | 使用说明 |
@@ -88,9 +118,11 @@
 
 ## 已知问题
 
-- TUI 模式需要 `windows-curses`（Windows）或 `curses`（Linux/macOS）
+- 增强终端界面需要 `.[tui]`（Python 3.9+，项目目标 3.11/3.13）；基础 CLI/Web/plain 保持 3.7+
+- 40 列紧凑布局的可读性需真实终端人工确认；低于 40 列显示尺寸提示
+- 真实终端输入法（Windows 中文输入、颜色、快捷键）需至少一次真人/真实终端记录
 - 告警历史在保存时限制为最近 500 条；仍可使用 `cleanup_alerts.py` 做按日期清理
-- TUI 在不同终端上的 curses 支持仍取决于平台（Windows 可选 `windows-curses`）
+- 香港业务日期语义（Asia/Hong_Kong 统一）仍为独立高优先级决策，本次未变更
 
 ## 本轮改进记录 — 2026-09-08
 

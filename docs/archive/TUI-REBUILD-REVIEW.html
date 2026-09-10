@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TUI 重建报告 · 评审意见</title>
+<style>
+:root {
+  --bg: #0b1220;
+  --panel: #121d30;
+  --panel-2: #17263d;
+  --line: #2b405f;
+  --text: #e7eef8;
+  --muted: #9fb0c8;
+  --accent: #f5b942;
+  --cyan: #62d8e8;
+  --green: #63d297;
+  --yellow: #f6c85f;
+  --red: #ff7f8a;
+  --blue: #8fb8ff;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 78px; }
+body {
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 92% -4%, rgba(255,127,138,.10), transparent 30rem),
+    radial-gradient(circle at 0% 18%, rgba(245,185,66,.10), transparent 28rem),
+    var(--bg);
+  font: 15px/1.78 "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+a { color: var(--cyan); text-underline-offset: 3px; }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.wrap { max-width: 1160px; margin: 0 auto; padding: 30px 20px 70px; }
+
+header.hero {
+  padding: 34px 36px 30px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(23,38,61,.96), rgba(18,29,48,.92));
+}
+.kicker { font: 12px/1.6 Consolas, monospace; letter-spacing: .18em; color: var(--accent); text-transform: uppercase; }
+h1 { font-size: clamp(26px, 3.6vw, 40px); line-height: 1.25; margin: 16px 0 12px; letter-spacing: -.5px; }
+h1 span { display: block; font-size: .52em; font-weight: 400; color: var(--muted); margin-top: 12px; letter-spacing: 0; }
+.lead { font-size: 17px; line-height: 1.72; color: #d3e0f0; margin: 0 0 4px; max-width: 860px; }
+
+.meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-top: 26px; }
+.meta div { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: rgba(11,18,32,.55); }
+.meta small { display: block; font: 11px/1.7 Consolas, monospace; letter-spacing: .1em; color: var(--muted); }
+.meta strong { font-size: 14px; font-weight: 500; }
+
+nav.toc {
+  position: sticky; top: 0; z-index: 5; margin: 22px 0 8px; padding: 10px 0;
+  display: flex; flex-wrap: wrap; gap: 8px;
+  background: rgba(11,18,32,.92); backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--line);
+}
+nav.toc a {
+  font-size: 13px; text-decoration: none; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; background: var(--panel);
+}
+nav.toc a:hover { color: var(--text); border-color: var(--accent); }
+
+section { margin-top: 46px; }
+h2 { font-size: 23px; margin: 0 0 18px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+h2 .id { font: 13px Consolas, monospace; color: var(--accent); margin-right: 12px; }
+h3 { font-size: 17px; margin: 26px 0 10px; }
+p { margin: 10px 0 14px; }
+ul, ol { padding-left: 22px; margin: 8px 0 14px; }
+li { margin: 7px 0; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+.card { border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; background: var(--panel); }
+.card h3 { margin: 0 0 8px; font-size: 16px; }
+.card p:last-child { margin-bottom: 0; }
+.card.ok { border-left: 4px solid var(--green); }
+.card.warn { border-left: 4px solid var(--yellow); }
+.card.bad { border-left: 4px solid var(--red); }
+.card.info { border-left: 4px solid var(--blue); }
+
+.tag {
+  display: inline-block; font: 11px/1.6 Consolas, monospace; letter-spacing: .06em;
+  padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
+}
+.tag.ok { color: var(--green); border-color: rgba(99,210,151,.45); }
+.tag.warn { color: var(--yellow); border-color: rgba(246,200,95,.45); }
+.tag.bad { color: var(--red); border-color: rgba(255,127,138,.45); }
+.tag.info { color: var(--blue); border-color: rgba(143,184,255,.45); }
+
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; background: var(--panel); }
+th, td { padding: 11px 13px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+th { background: var(--panel-2); font-size: 12px; letter-spacing: .04em; color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { color: var(--text); }
+
+code { font: 13px/1.6 Consolas, monospace; background: rgba(143,184,255,.10); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre {
+  font: 12.5px/1.7 Consolas, "Microsoft YaHei", monospace;
+  background: #0d1626; border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px 18px; overflow-x: auto; color: #cfe0f2; margin: 12px 0 16px;
+}
+pre code { background: none; padding: 0; }
+.loc { font: 12px Consolas, monospace; color: var(--muted); white-space: nowrap; }
+
+.note { border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 12px; padding: 14px 18px; background: rgba(23,38,61,.55); margin: 16px 0; }
+.note.warn { border-left-color: var(--yellow); }
+.note.bad { border-left-color: var(--red); }
+.note.ok { border-left-color: var(--green); }
+.note p:last-child { margin-bottom: 0; }
+.note h3 { margin-top: 0; }
+
+.q { border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; background: var(--panel); margin: 14px 0; }
+.q .qh { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.q .qn { font: 600 13px Consolas, monospace; color: var(--accent); }
+.q h3 { margin: 0; font-size: 16px; flex: 1 1 320px; }
+.q dl { margin: 8px 0 0; display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 6px 14px; }
+.q dt { color: var(--muted); font-size: 13px; }
+.q dd { margin: 0; }
+
+figure { margin: 20px 0 8px; }
+figure svg { width: 100%; height: auto; }
+figcaption { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+
+.rev { list-style: none; padding: 0; margin: 12px 0; }
+.rev li { border: 1px solid var(--line); border-radius: 12px; padding: 13px 16px; background: var(--panel); margin: 10px 0; }
+.rev li b { color: var(--accent); font: 13px Consolas, monospace; margin-right: 10px; }
+
+details { border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; background: var(--panel); margin: 16px 0; }
+summary { cursor: pointer; font-weight: 500; }
+
+footer { margin-top: 52px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+footer p { margin: 6px 0; }
+
+@media (max-width: 720px) {
+  .wrap { padding: 20px 14px 50px; }
+  header.hero { padding: 24px 20px; }
+  nav.toc { position: static; }
+  h2 { font-size: 20px; }
+  th, td { padding: 9px 10px; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+@media print {
+  body { background: #fff; color: #111; }
+  nav.toc, figure { display: none; }
+  .card, .note, .q, .rev li, pre, table { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">Review · Proposed · Not Approved</div>
+  <h1>TUI 重建报告 · 评审意见<span>对《重建终端航班工作台》提案的事实核对、分歧与前置问题</span></h1>
+  <p class="lead">结论：诊断部分事实准确，可以直接作为后续工作的事实基础；但方案缺少一个 0.5–1 人日的中间选项，且有六个问题必须在 G0 之前回答。本报告不批准、不实施，仅提出意见。</p>
+  <div class="meta">
+    <div><small>被评审文档</small><strong><a href="TUI-REBUILD-REPORT.html">TUI-REBUILD-REPORT.html</a></strong></div>
+    <div><small>评审日期</small><strong>2026-09-09</strong></div>
+    <div><small>核对方式</small><strong>静态阅读，15 项断言抽查</strong></div>
+    <div><small>总体判定</small><strong style="color:var(--yellow)">认可诊断 · 对节奏与依赖有分歧</strong></div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="目录">
+  <a href="#s1">01 结论摘要</a>
+  <a href="#s2">02 事实核对</a>
+  <a href="#s3">03 主要分歧</a>
+  <a href="#s4">04 六个前置问题</a>
+  <a href="#s5">05 内部约束冲突</a>
+  <a href="#s6">06 Prompt 与批准记录</a>
+  <a href="#s7">07 修订清单</a>
+  <a href="#s8">08 边界声明</a>
+</nav>
+
+<section id="s1">
+<h2><span class="id">01</span>结论摘要</h2>
+
+<div class="cards">
+  <div class="card ok">
+    <h3>诊断部分：认可</h3>
+    <p>第 01/02/07 节对现状的描述与代码一致。15 项可核查断言<strong>全部属实</strong>，没有发现虚构、夸大或"把推测写成事实"的情况。这部分可以直接当作事实基础使用。</p>
+  </div>
+  <div class="card bad">
+    <h3>节奏：有分歧</h3>
+    <p>路线表里缺一档——<strong>先花 0.5–1 人日修掉三个已确认缺陷</strong>。报告把"止血"和"全功能零依赖 curses 重写"混为一谈，等于用 9–15 人日的方案去解决 1 人日能缓解的疼痛。</p>
+  </div>
+  <div class="card warn">
+    <h3>依赖与兼容：需补充</h3>
+    <p>"可选依赖"的代价被低估，Python 3.7 的 <code>compileall</code> 归属未定，Windows 下快照测试策略缺失，告警未读数的派生方式是设计空白。<strong>六个问题需在 G0 前回答</strong>。</p>
+  </div>
+  <div class="card info">
+    <h3>报告内部：两处冲突</h3>
+    <p>第 07 节要 <code>cache_saved_at</code>，第 08 节说"不改缓存格式"；迁移表说参数"保持含义"，实际裸入口并不接受 <code>--no-poll</code>。两处都需要写死取舍。</p>
+  </div>
+</div>
+
+<h3>按章节的判定矩阵</h3>
+<div class="table-scroll">
+<table>
+<thead><tr><th>报告章节</th><th>判定</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>01 整体决策</td><td><span class="tag ok">认可</span></td><td>明确写出"这不是无代价的替换"、明确列出不选择理由，态度诚实</td></tr>
+<tr><td>02 重建依据</td><td><span class="tag ok">认可</span> <span class="tag warn">有遗漏</span></td><td>断言准确；但漏掉 cli.py 从未调用 stop()、poller 比对段在锁外、FVM 融合是死代码三条更硬的证据</td></tr>
+<tr><td>03 产品范围</td><td><span class="tag ok">认可</span></td><td>"四页 + 详情"与 NOT NOW 清单界定清楚，符合"不让重写无限扩张"</td></tr>
+<tr><td>04 目标界面</td><td><span class="tag ok">认可</span></td><td>三档布局策略合理；40 列下自身 header 已接近挤爆，建议 G0 实测后上调门槛</td></tr>
+<tr><td>05 交互契约</td><td><span class="tag warn">需修订</span></td><td>Esc 的四层回退与"1/2/5/6 平级主页"模型冲突，建议砍掉"返回前一主页面"</td></tr>
+<tr><td>06 架构与接口</td><td><span class="tag ok">认可</span></td><td>三个 seam 的取舍克制，没有过度抽象</td></tr>
+<tr><td>07 数据可靠性</td><td><span class="tag ok">认可</span> <span class="tag bad">有冲突</span></td><td>健康元数据设计是全文最有价值的部分；<code>cache_saved_at</code> 与"不改缓存格式"冲突</td></tr>
+<tr><td>08 迁移与兼容</td><td><span class="tag warn">需修订</span></td><td>3.7 <code>compileall</code> 归属未定；参数"保持含义"表述与实现不符</td></tr>
+<tr><td>09 开发拆分</td><td><span class="tag ok">认可</span></td><td>G0 的"不满足就回到路线 B"是好的止损设计</td></tr>
+<tr><td>10 验收矩阵</td><td><span class="tag ok">认可</span> <span class="tag warn">需补充</span></td><td>A1–A11 可证伪，质量高；A6 需按平台拆分断言策略，性能预算需绑定增量更新</td></tr>
+<tr><td>11 审阅决定</td><td><span class="tag ok">认可</span></td><td>六个决定问得对；建议把"Textual 是否最终进默认依赖"加入</td></tr>
+<tr><td>12 开发 Prompt</td><td><span class="tag warn">需修订</span></td><td>600+ 字单句，后半段约束在长上下文执行中最易丢失</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<section id="s2">
+<h2><span class="id">02</span>事实核对：15 项断言，无一虚构</h2>
+<p>我按报告第 02 节列出的证据逐条回到代码核对。结论是<strong>报告在事实层面是可靠的</strong>——这对一份用来申请 9–15 人日预算的提案来说是最重要的一点。</p>
+
+<div class="table-scroll">
+<table>
+<thead><tr><th>抽查项</th><th>报告断言</th><th>核对</th><th>代码位置</th></tr></thead>
+<tbody>
+<tr><td>tui.py 规模与双实现</td><td>约 593 行，含 curses 与 simple 两条实现</td><td><span class="tag ok">属实</span></td><td class="loc">tui.py:1-593</td></tr>
+<tr><td>告警 / 航司页</td><td>各自读取一次按键后回到离港</td><td><span class="tag ok">属实</span></td><td class="loc">tui.py:500-512, 188-209</td></tr>
+<tr><td>渲染中做网络请求</td><td>航司请求发生在渲染中</td><td><span class="tag ok">属实</span></td><td class="loc">tui.py:458-460, 120-122</td></tr>
+<tr><td>主循环不检查新快照</td><td>超时返回时不检查新快照</td><td><span class="tag ok">属实</span></td><td class="loc">tui.py:568-578</td></tr>
+<tr><td>持有旧列表引用</td><td>TUI 持有旧列表引用，数据不更新</td><td><span class="tag ok">属实</span></td><td class="loc">tui.py:265-267</td></tr>
+<tr><td>分页与可见行脱节</td><td>固定每页 20 条与可见行数分离</td><td><span class="tag ok">属实</span></td><td class="loc">tui.py:390-405</td></tr>
+<tr><td>get_today 泄漏内部状态</td><td>返回内部列表而非副本</td><td><span class="tag ok">属实</span></td><td class="loc">poller.py:71-73</td></tr>
+<tr><td>启动重复请求</td><td>start 同步首刷后线程立即再刷</td><td><span class="tag ok">属实</span></td><td class="loc">poller.py:39-46</td></tr>
+<tr><td>写入加锁</td><td>写列表与 last_update 时加锁</td><td><span class="tag warn">部分</span></td><td class="loc">poller.py:112-114（比对段在锁外，见下）</td></tr>
+<tr><td>失败语义</td><td>航班接口用 None 表示失败；航司失败返回空列表</td><td><span class="tag ok">属实</span></td><td class="loc">api.py:63, 96-106</td></tr>
+<tr><td>限速非线程安全</td><td>共享实例的请求调度需串行保护</td><td><span class="tag ok">属实</span></td><td class="loc">api.py:32-38</td></tr>
+<tr><td>行身份唯一性</td><td>key 在跨方向列表可能不唯一</td><td><span class="tag ok">属实</span></td><td class="loc">utils.py:30-32</td></tr>
+<tr><td>告警深拷贝</td><td>get_active 返回深拷贝</td><td><span class="tag ok">属实</span></td><td class="loc">alerts.py:42-45</td></tr>
+<tr><td>规范化字段</td><td>保留代码共享字段，但不生成 registration</td><td><span class="tag ok">属实</span></td><td class="loc">utils.py:206-227</td></tr>
+<tr><td>运行时与 CI</td><td>基础运行时 3.7+、无必装依赖、CI 覆盖 3.7/3.11/3.13</td><td><span class="tag ok">属实</span></td><td class="loc">pyproject.toml:10, ci.yml:12</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note bad">
+<h3>但报告漏了三条比已列出项更硬的证据，建议补进第 02 节</h3>
+<ol>
+<li><strong>cli.py 的 TUI 路径从未清理任何资源。</strong> <code>tui</code> 分支与默认分支都没有 <code>try/finally</code>，<code>poller.stop()</code> 与 <code>web_server.stop()</code> 在整个文件里<strong>一次都没被调用</strong>。按 W 开过 Web 再按 Q 退出，端口仍被 daemon 线程持有。这比"缺少统一的 TUI 会话 finally 清理"的措辞严重得多，应当作为"必须重建生命周期"的头号证据。<span class="loc">cli.py:655-692</span></li>
+<li><strong>Poller 的告警比对段在锁外读取共享状态。</strong> <code>refresh_today()</code> 在第 103–110 行遍历 <code>self.today_records</code> 构建 old_map，但这段代码在 <code>with self._lock</code> 之外，与 UI 线程的 <code>get_today()</code> 构成真实竞态。报告提出的"原子防御性快照"必须明确覆盖这里，而不只是覆盖写入。<span class="loc">poller.py:103-114</span></li>
+<li><strong>FVM 融合是死代码，REG 恒为空。</strong> <code>cli.py:_merge_fvm_data()</code> 定义了但没有任何调用点；旧 TUI 表格有 REG 列，数据源却永远不提供 registration。所以"REG Not provided"不是偶发缺失，是<strong>恒定状态</strong>。首版与其展示一个恒为"未提供"的字段，不如直接不显示 REG 列。<span class="loc">cli.py:227-246, tui.py:414</span></li>
+</ol>
+</div>
+</section>
+
+<section id="s3">
+<h2><span class="id">03</span>主要分歧：路线表里缺了一档</h2>
+<p>报告给了 A/B/C/D 四条路线，但没有"先止血"。我核对后发现，最痛的两类问题在现有 curses 实现里改动都很小。</p>
+
+<figure>
+<svg viewBox="0 0 680 222" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>先止血还是直接重建的决策分叉</title>
+<desc>当前 curses TUI 可以先花 0.5 到 1 人日修复三个已确认缺陷，评估后再决定是否投入 9 到 15 人日做 Textual 重建。</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<rect x="210" y="30" width="260" height="56" rx="8" fill="#17263d" stroke="#2b405f" stroke-width="0.5"/>
+<text x="340" y="48" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, sans-serif" font-size="14" font-weight="500" fill="#e7eef8">当前 curses TUI</text>
+<text x="340" y="66" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, sans-serif" font-size="12" fill="#9fb0c8">三类缺陷已由代码确认</text>
+<path d="M340 86 L340 118 L160 118 L160 146" fill="none" stroke="#5b6f8f" stroke-width="1.5" marker-end="url(#arrow)"/>
+<path d="M340 86 L340 118 L520 118 L520 146" fill="none" stroke="#5b6f8f" stroke-width="1.5" marker-end="url(#arrow)"/>
+<rect x="50" y="146" width="220" height="56" rx="8" fill="#123a33" stroke="#63d297" stroke-width="0.5"/>
+<text x="160" y="164" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, sans-serif" font-size="14" font-weight="500" fill="#9fe8c4">先止血</text>
+<text x="160" y="182" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, sans-serif" font-size="12" fill="#63d297">0.5–1 人日 · 修三个缺陷</text>
+<rect x="410" y="146" width="220" height="56" rx="8" fill="#3a2a12" stroke="#f6c85f" stroke-width="0.5"/>
+<text x="520" y="164" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, sans-serif" font-size="14" font-weight="500" fill="#fbe3a6">直接重建</text>
+<text x="520" y="182" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, sans-serif" font-size="12" fill="#f6c85f">9–15 人日 · Textual 主界面</text>
+<text x="340" y="163" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI, sans-serif" font-size="12" fill="#9fb0c8">评估后决定</text>
+<path d="M270 174 L410 174" fill="none" stroke="#5b6f8f" stroke-width="1.5" marker-end="url(#arrow)"/>
+</svg>
+<figcaption>报告只给了右侧那条路。左侧这条路成本不到十分之一，且不会阻塞后续任何决策。</figcaption>
+</figure>
+
+<h3>三个可以在 0.5–1 人日内修掉的缺陷</h3>
+<div class="table-scroll">
+<table>
+<thead><tr><th>缺陷</th><th>现状位置</th><th>止血改法</th><th>是否影响后续重建</th></tr></thead>
+<tbody>
+<tr><td>渲染中发起航司请求，缓存失效时卡住整屏</td><td class="loc">tui.py:458-460</td><td>把 <code>fetch_airlines()</code> 移到切页处理里预取一次，渲染只读结果</td><td>不冲突，新架构同样需要"禁止渲染 I/O"</td></tr>
+<tr><td>TUI 持有旧列表引用，数据永不更新</td><td class="loc">tui.py:265-267, 568-578</td><td>给 Poller 加 <code>version</code> 与 <code>snapshot()</code>；<code>getch</code> 超时后比较 version 再 <code>load_view()</code></td><td>不冲突，<code>snapshot()</code> 正是新架构要的 seam</td></tr>
+<tr><td>TUI 退出不清理 Poller / WebServer</td><td class="loc">cli.py:655-692</td><td>cmd_tui 包一层 <code>try/finally</code>，统一 stop</td><td>不冲突，Session 生命周期是重建的必经之路</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note warn">
+<p><strong>这不是反对重建，而是反对用重建去解决可以立刻缓解的疼痛。</strong>上述三处的产出（<code>snapshot()</code>、<code>version</code>、统一清理）恰好也是新架构的地基，做止血不会浪费。更重要的是：先跑几天修好的版本，你再判断"Textual 到底解决了什么"，判断会准得多——那时可能发现剩下的问题用 1 人日也能收尾，也可能确认非重建不可。两种结果都比现在直接投 9–15 人日要好。</p>
+</div>
+</section>
+
+<section id="s4">
+<h2><span class="id">04</span>六个必须在 G0 之前回答的问题</h2>
+<p>这些问题报告要么没提，要么留到了 G4。但它们的答案会改变架构，晚答的代价很高。</p>
+
+<div class="q">
+<div class="qh"><span class="qn">Q1</span><h3>Textual 最终会不会进入默认安装路径？</h3><span class="tag bad">阻塞架构决策</span></div>
+<dl>
+<dt>为什么现在要答</dt><dd>报告说"可选依赖 <code>.[tui]</code>"，但 G4 又要"让 auto 优先选择新界面"。一旦 auto 优先，绝大多数用户会装上 Textual 整条依赖链（rich / markdown-it-py / pygments / platformdirs…），"零依赖"这个卖点实际就放弃了。</dd>
+<dt>建议</dt><dd>G0 就给出结论并写进 README 项目定位，而不是留给 G4。如果答案是"会"，那第 08 节的依赖政策措辞需要整体改写。</dd>
+</dl>
+</div>
+
+<div class="q">
+<div class="qh"><span class="qn">Q2</span><h3>Python 3.7 的 <code>compileall</code> 如何归属？</h3><span class="tag bad">会让 CI 红灯</span></div>
+<dl>
+<dt>为什么现在要答</dt><dd>CI 的 <code>python -m compileall -q hkg_flight</code> 会扫到 <code>hkg_flight/terminal/*.py</code>。报告一边要求"新版 UI 源码尽量保持可解析"，一边允许 Textual 的现代写法，这两条会在 3.7 job 上直接打架。</dd>
+<dt>建议</dt><dd>二选一并写死：按目录拆分 compileall 扫描范围，或明确哪些文件移出扫描并加注释。现在"尽量保持可解析"会变成偶发红灯。</dd>
+</dl>
+</div>
+
+<div class="q">
+<div class="qh"><span class="qn">Q3</span><h3>告警未读数怎么派生？</h3><span class="tag bad">设计空白</span></div>
+<dl>
+<dt>为什么现在要答</dt><dd><code>new_flag</code> 是消费型的（<code>consume_new_flag</code> 读后即清），报告又说"不消费共享 new_flag 去影响其他消费者"。那 TUI 只能自己比对 active 列表，但报告没写清怎么比对、以什么为幂等键。</dd>
+<dt>建议</dt><dd>为 UI 增加一个<strong>只读版本计数器</strong>，比复用 new_flag 干净，也避免与 Web 端互抢。另外注意 <code>_clear_for_key</code> 会在航班 departed/landed/cancelled 时自动清除告警，活跃集合随时间自然衰减——多数时候第四页是空的，这个现实应该影响"第四页"的定位。</dd>
+</dl>
+</div>
+
+<div class="q">
+<div class="qh"><span class="qn">Q4</span><h3>Esc 到底有几层语义？</h3><span class="tag warn">契约自相矛盾</span></div>
+<dl>
+<dt>为什么现在要答</dt><dd>"依次关闭覆盖面板 → 清除筛选 → 返回前一主页面 → 无操作"里，第三层需要一个页面历史栈；但 1/2/5/6 被定义为平级主页面，且航司页 Enter 自带返回逻辑，两套返回机制并存。</dd>
+<dt>建议</dt><dd>砍掉第三层：Esc 只保留"取消输入 / 覆盖"与"清除筛选"两个语义，切页只用数字键与航司页 Enter。少一层状态，帮助文本和测试都更好写。</dd>
+</dl>
+</div>
+
+<div class="q">
+<div class="qh"><span class="qn">Q5</span><h3>Windows 上的尺寸快照怎么断言？</h3><span class="tag warn">测试会 flaky</span></div>
+<dl>
+<dt>为什么现在要答</dt><dd>A6 要求"真实框架定尺寸快照 + resize 交互"。Textual 快照在 Windows 与 Linux 下存在行尾与宽度计算差异，写成字符串相等断言在 Windows CI 上必然间歇失败。</dd>
+<dt>建议</dt><dd>字符串快照断言只在 Linux CI 跑；Windows CI 降级为"不抛异常 + 关键字段存在"的结构断言。另外 40 列下报告自己的 header（<code>HKG 09-09 | CACHE / STALE</code>）已接近挤爆，建议 G0 实测后上调最小宽度门槛。</dd>
+</dl>
+</div>
+
+<div class="q">
+<div class="qh"><span class="qn">Q6</span><h3>时区问题要不要就地解决？</h3><span class="tag warn">影响目标用户</span></div>
+<dl>
+<dt>为什么现在要答</dt><dd><code>today_str()</code> 取系统本地日期。用户在 UTC+0 查询时，23:00 UTC 会拿到"明天"的香港数据。对项目目标用户（在香港以外查 HKG）这是常态而非边缘情况。</dd>
+<dt>建议</dt><dd>报告的保守处理（显示偏移、不称 HKT）我认可，但应标为<strong>高优先级后续项</strong>而非普通排除项，并在 G0 记录结论与理由。</dd>
+</dl>
+</div>
+</section>
+
+<section id="s5">
+<h2><span class="id">05</span>两处内部约束冲突</h2>
+
+<div class="note bad">
+<h3>冲突一：<code>cache_saved_at</code> 与"不改缓存格式"</h3>
+<p>第 07 节要求快照携带 <code>cache_saved_at</code>，第 08 节承诺"不修改缓存格式"。现实是 <code>cache.cache_age_minutes()</code> 基于文件 mtime，缓存年龄<strong>总是可测</strong>——因此报告设计的 UNKNOWN AGE 分支几乎永远触发不到，而"mtime ≠ 数据生成时刻"这个真正的语义问题却仍在。</p>
+<p><strong>建议写死取舍：</strong><code>cache_saved_at</code> 取自文件 mtime，不动缓存 JSON 结构；界面措辞用"缓存写入时间"而不是"数据生成时间"。把这个决定写进报告正文，别留给实现者现场发挥。</p>
+</div>
+
+<div class="note bad">
+<h3>冲突二：参数"保持含义"与实现不符</h3>
+<p>迁移表称 <code>--cache-dir / --force / --port / --no-poll</code> "保持含义"。实际后两个<strong>只定义在 <code>tui</code> 子解析器上</strong>，裸 <code>python -m hkg_flight --no-poll</code> 现在是 argparse 直接报错。对裸入口而言这是新增能力，不是保持。</p>
+<p><strong>建议：</strong>在迁移表中注明哪些是"保持"、哪些是"新增"，避免验收时按"保持"去测一个本来不存在的参数。</p>
+<pre><code># 现状
+python -m hkg_flight tui --no-poll      # 可用（tui 子解析器）
+python -m hkg_flight --no-poll          # argparse error: unrecognized arguments</code></pre>
+</div>
+</section>
+
+<section id="s6">
+<h2><span class="id">06</span>Prompt 与批准记录</h2>
+
+<h3>第 12 节的单行 Prompt：建议改为"报告即规范"</h3>
+<p>现在这版 600+ 字的单句把所有约束（no-poll、日期、限速、Unicode、NO_COLOR、非 TTY、退出清理、禁止提交……）压在一起。经验上，超长单句在长上下文执行中<strong>后半段约束最容易丢失</strong>——而"禁止自动提交""不得改缓存格式"恰好好在最后。</p>
+<p>建议 Prompt 只保留一句指向性指令，让约束留在文档里由执行者回读：</p>
+<pre><code>请在 O:\lyh\Projects\hkia\hkg-flight-data-v3 中按 TUI-REBUILD-REPORT.html 执行 G0→G4：
+第 11 节六个决策视为已批准，第 10 节为验收标准，第 03 节与第 08 节分别为范围与兼容边界，
+不得越界实现未批准功能。执行前先完整阅读该报告，并在每个阶段退出时逐条回读对应验收项。</code></pre>
+
+<h3>批准记录应落在仓库里</h3>
+<p>报告第 11 节说"批准前不实施"，但目前"谁批准了什么"只存在于对话里。建议在 <code>.agents/notes/proposed/architecture/2026-09-09-tui-rebuild.md</code> 追加一条：已批准 / 批准人 / 日期 / 批准的偏离项。否则三个月后没人能重建这个决策。</p>
+</section>
+
+<section id="s7">
+<h2><span class="id">07</span>修订清单</h2>
+<p>如果采纳上述意见，建议对报告正文做以下具体修订：</p>
+<ul class="rev">
+<li><b>R1</b> 第 02 节补入三条遗漏证据：cli.py 无 finally 清理、poller 比对段在锁外、FVM 融合为死代码。</li>
+<li><b>R2</b> 第 01 节路线表增加"先止血（0.5–1 人日）"一档，并说明其与路线 C 的关系。</li>
+<li><b>R3</b> 第 05 节删除 Esc 的"返回前一主页面"层，同步修改帮助文本与 A2 验收项。</li>
+<li><b>R4</b> 第 07 节明确 <code>cache_saved_at</code> 取自 mtime、不修改缓存文件结构。</li>
+<li><b>R5</b> 第 07 节补充告警未读数的派生方式（建议只读版本计数器）。</li>
+<li><b>R6</b> 第 08 节明确 3.7 <code>compileall</code> 的扫描范围与豁免文件。</li>
+<li><b>R7</b> 第 08 节迁移表区分"保持含义"与"新增参数"（<code>--port</code>/<code>--no-poll</code> 在裸入口为新增）。</li>
+<li><b>R8</b> 第 10 节 A6 按平台拆分断言策略；性能预算的 100 ms p95 明确绑定"增量更新"前提，并给出内存采样方法（每 5 分钟采样 widget 数 / 线程数 / 队列长度）。</li>
+<li><b>R9</b> 第 11 节加入第七个决定："Textual 是否最终进入默认安装路径"。</li>
+<li><b>R10</b> 第 12 节 Prompt 改为指向性短句 + 报告作为唯一规范正文。</li>
+</ul>
+
+<details>
+<summary>如果坚持一次性重建（不先止血），我仍然建议保留的三条底线</summary>
+<ul>
+<li><strong>G0 不通过就停。</strong> 报告已有这条止损设计，执行时不要因为"已经写了一半"而跳过。</li>
+<li><strong>先让新界面显式启用</strong>（<code>--ui textual</code>），完成 A1–A11 后再切 auto。不要边写边切默认。</li>
+<li><strong>REG 列首版不显示。</strong> 数据源恒不提供，展示一个恒为"未提供"的字段只会占据宝贵的窄屏宽度。</li>
+</ul>
+</details>
+</section>
+
+<section id="s8">
+<h2><span class="id">08</span>边界声明</h2>
+<div class="note">
+<ul>
+<li>本轮为<strong>静态代码阅读</strong>，未运行产品测试、未安装或验证 Textual、未复现任何缺陷的实际表现。</li>
+<li>行号基于 2026-09-09 的工作区快照；代码变动后需要重新核对。</li>
+<li>本文件为<strong>新增评审文件</strong>；评审阶段未修改任何既有项目文件，也未改动缓存、未提交或推送。</li>
+<li>本报告不构成对重建方案的批准或否决，第 11 节的六个决定仍需你确认。</li>
+</ul>
+</div>
+</section>
+
+<footer>
+<p><strong>状态：</strong>评审意见 · 2026-09-09 · 未实施 · 未批准。</p>
+<p><strong>被评审文档：</strong><a href="TUI-REBUILD-REPORT.html">TUI-REBUILD-REPORT.html</a>（重建终端航班工作台 · Rev 1 · proposed）</p>
+<p><strong>核对来源：</strong><code>hkg_flight/tui.py</code>、<code>cli.py</code>、<code>poller.py</code>、<code>api.py</code>、<code>alerts.py</code>、<code>cache.py</code>、<code>utils.py</code>、<code>web.py</code>、<code>pyproject.toml</code>、<code>.github/workflows/ci.yml</code> 的静态阅读。</p>
+<p><strong>相关文档：</strong><a href="TUI-IMPROVEMENT-PLAN.html">原改进计划</a> · <a href="TUI-PLAN-REVIEW.html">原改进计划评审</a> · <a href=".agents/notes/proposed/architecture/2026-09-09-tui-rebuild.md">提案登记</a></p>
+</footer>
+
+</div>
+</body>
+</html>

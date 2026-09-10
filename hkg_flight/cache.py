@@ -102,9 +102,26 @@ class CacheSystem(object):
     def cache_age_minutes(self, path):
         try:
             age = time.time() - os.path.getmtime(path)
+            if age < 0:
+                age = 0
             return int(age // 60)
         except Exception:
             return -1
+
+    def flight_mtime(self, date_str):
+        """Return the cached flights file mtime as epoch seconds, or None.
+
+        ``cache_saved_at`` reads this value: it records when the local cache
+        file was written, not when HKIA generated the data. When the file or
+        stat is unavailable the caller must surface UNKNOWN, not a fake time.
+        """
+        path = self.flight_path(date_str)
+        if path is None:
+            return None
+        try:
+            return os.path.getmtime(path)
+        except Exception:
+            return None
 
     # -- flights ----------------------------------------------------------
     def read_flights(self, date_str):

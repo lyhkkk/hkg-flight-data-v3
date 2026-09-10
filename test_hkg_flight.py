@@ -1,14 +1,13 @@
 # HKG Flight Data v3 - Test Suite
 # Tests for core functionality
 
-import importlib.util
 import os
 import sys
 import time
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from io import StringIO
 
 # Add parent directory to path
@@ -36,32 +35,6 @@ from hkg_flight import (
     flights_for_date,
 )
 from hkg_flight.web import WebServer
-from hkg_flight.tui import CursesTUI
-
-
-class FakeCursesScreen:
-    """Small curses-screen double for deterministic TUI rendering tests."""
-
-    def __init__(self, height=30, width=120):
-        self.height = height
-        self.width = width
-        self.timeout_value = None
-        self.lines = []
-
-    def timeout(self, value):
-        self.timeout_value = value
-
-    def clear(self):
-        self.lines = []
-
-    def getmaxyx(self):
-        return self.height, self.width
-
-    def addstr(self, *args):
-        self.lines.append(args)
-
-    def refresh(self):
-        pass
 
 
 class TestCLICompactOutput(unittest.TestCase):
@@ -120,21 +93,6 @@ class TestCLICompactOutput(unittest.TestCase):
 
         self.assertEqual(output.getvalue().count("CX759"), 50)
         self.assertIn("... and 1 more flights", output.getvalue())
-
-
-class TestSimpleTUIColor(unittest.TestCase):
-    """Test ANSI color output respects terminal and NO_COLOR state."""
-
-    def test_colors_are_plain_for_non_tty(self):
-        from hkg_flight.tui import _colored
-
-        self.assertEqual(_colored("hello", "31", enabled=False), "hello")
-
-    def test_no_color_environment_disables_colors(self):
-        from hkg_flight.tui import _colors_enabled
-
-        with patch.dict(os.environ, {"NO_COLOR": "1"}):
-            self.assertFalse(_colors_enabled())
 
 
 class TestUtilityFunctions(unittest.TestCase):
@@ -880,46 +838,6 @@ class TestWebServer(unittest.TestCase):
             self.assertEqual(unknown.exception.code, 404)
         finally:
             self.server.stop()
-
-
-_CURSES_AVAILABLE = importlib.util.find_spec("_curses") is not None
-
-
-@unittest.skipUnless(_CURSES_AVAILABLE, "requires curses")
-class TestCursesTUI(unittest.TestCase):
-    """Test curses TUI mode dispatch and filter input."""
-
-    def setUp(self):
-        self.screen = FakeCursesScreen()
-        self.api = MagicMock()
-        self.api.fetch_airlines.return_value = []
-        self.poller = MagicMock()
-        self.poller.today_records = []
-        self.alert_manager = MagicMock()
-        self.alert_manager.active_count.return_value = 0
-        self.alert_manager.get_active.return_value = []
-        self.tui = CursesTUI(self.screen, self.poller, self.api, self.alert_manager, None)
-
-    def test_alert_and_airline_modes_render_their_views(self):
-        """Test modes dispatch to their dedicated renderers."""
-        self.tui.set_mode("alerts")
-        self.tui.render()
-        self.assertTrue(any("Active Alerts" in str(args) for args in self.screen.lines))
-
-        self.tui.set_mode("airlines")
-        self.tui.render()
-        self.assertTrue(any("Airlines" in str(args) for args in self.screen.lines))
-
-    def test_printable_filter_and_escape(self):
-        """Test printable input, backspace, and Escape behavior."""
-        import curses
-        self.tui.handle_key(ord("C"))
-        self.tui.handle_key(ord("X"))
-        self.assertEqual(self.tui.filter_text, "CX")
-        self.tui.handle_key(curses.KEY_BACKSPACE)
-        self.assertEqual(self.tui.filter_text, "C")
-        self.tui.handle_key(27)
-        self.assertEqual(self.tui.filter_text, "")
 
 
 class TestSearchFlights(unittest.TestCase):

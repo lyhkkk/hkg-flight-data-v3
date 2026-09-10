@@ -19,6 +19,12 @@ from .utils import (
 )
 
 
+class _HTTPServer(ThreadingHTTPServer):
+    """HTTP server that does not reuse addresses, so a busy port fails loudly."""
+
+    allow_reuse_address = False
+
+
 class WebServer(object):
     """
     HTTP server providing flight data API and web UI.
@@ -41,7 +47,7 @@ class WebServer(object):
         """Start the web server."""
         try:
             handler = self._make_handler()
-            self._server = ThreadingHTTPServer((self.host, self.port), handler)
+            self._server = _HTTPServer((self.host, self.port), handler)
             self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
             self._thread.start()
             log("Web server started on {}:{}".format(self.host, self.port))

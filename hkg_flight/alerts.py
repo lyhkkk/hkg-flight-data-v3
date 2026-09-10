@@ -19,6 +19,7 @@ class AlertManager(object):
     def __init__(self, cache=None):
         self.cache = cache
         self.lock = threading.RLock()
+        self._revision = 0
         self._alerts = {"active": [], "history": [], "new_flag": False}
         if cache is not None:
             self._alerts = cache.read_alerts()
@@ -48,6 +49,23 @@ class AlertManager(object):
         """Return a copy of the historical alerts."""
         with self.lock:
             return copy.deepcopy(self._alerts.get("history", []))
+
+    def alerts_revision(self):
+        """Return the monotonic revision counter for the active alert set."""
+        with self.lock:
+            return self._revision
+
+    def snapshot(self):
+        """Return an atomic read-only view of the active alerts.
+
+        Returns a dict with the current ``revision`` and a defensive copy of
+        the active alerts. Callers cannot mutate manager state through this.
+        """
+        with self.lock:
+            return {
+                "revision": self._revision,
+                "alerts": copy.deepcopy(self._alerts.get("active", [])),
+            }
 
     def consume_new_flag(self):
         """Consume and return the new alert flag."""
@@ -108,6 +126,7 @@ class AlertManager(object):
                     alert["status"] = status
                     alert["raised_at"] = datetime.now().isoformat(timespec="seconds")
                     self._alerts["new_flag"] = True
+                    self._revision += 1
                     self.save()
                     return
 
@@ -126,6 +145,7 @@ class AlertManager(object):
             }
             self._alerts.setdefault("active", []).append(alert)
             self._alerts["new_flag"] = True
+            self._revision += 1
             self.save()
 
     def _clear_for_key(self, key):
@@ -136,4 +156,5 @@ class AlertManager(object):
             if to_remove:
                 self._alerts["active"] = [a for a in active if a.get("key") != key]
                 self._alerts.setdefault("history", []).extend(to_remove)
+                self._revision += 1
                 self.save()

@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TUI 改进报告 · 评审意见</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #121d30;
+      --panel-2: #17263d;
+      --line: #2b405f;
+      --text: #e7eef8;
+      --muted: #9fb0c8;
+      --accent: #f5b942;
+      --cyan: #62d8e8;
+      --green: #63d297;
+      --yellow: #f6c85f;
+      --red: #ff7f8a;
+      --blue: #8fb8ff;
+      --shadow: 0 18px 45px rgba(0, 0, 0, .22);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 90% 0%, rgba(255,127,138,.10), transparent 30rem),
+        radial-gradient(circle at 0% 20%, rgba(245,185,66,.10), transparent 28rem),
+        var(--bg);
+      font: 15px/1.75 "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; }
+    header {
+      padding: 34px 36px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(135deg, rgba(23,38,61,.96), rgba(18,29,48,.92));
+      box-shadow: var(--shadow);
+    }
+    .eyebrow { color: var(--accent); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
+    h1 { margin: 8px 0 8px; font-size: clamp(26px, 4.5vw, 42px); line-height: 1.15; }
+    h2 { margin: 44px 0 16px; font-size: 24px; }
+    h2 .num { color: var(--accent); margin-right: 10px; }
+    h3 { margin: 0 0 8px; font-size: 17px; }
+    p { margin: 8px 0 14px; }
+    .lead { color: var(--muted); max-width: 860px; font-size: 17px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .pill { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(11,18,32,.45); font-size: 13px; }
+    .card, .callout {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(18,29,48,.88);
+      padding: 20px;
+    }
+    .card p { color: var(--muted); }
+    .card strong { color: var(--text); }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    .sev-critical { border-left: 4px solid var(--red); }
+    .sev-major { border-left: 4px solid var(--yellow); }
+    .sev-minor { border-left: 4px solid var(--blue); }
+    .tag { display: inline-block; margin-bottom: 10px; padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: 700; }
+    .tag-crit { color: #ffd9dd; background: rgba(255,127,138,.15); border: 1px solid rgba(255,127,138,.4); }
+    .tag-major { color: #ffe9ad; background: rgba(246,200,95,.14); border: 1px solid rgba(246,200,95,.35); }
+    .tag-minor { color: #cfe0ff; background: rgba(143,184,255,.14); border: 1px solid rgba(143,184,255,.35); }
+    .tag-ok { color: #c9f2dd; background: rgba(99,210,151,.14); border: 1px solid rgba(99,210,151,.35); }
+    .verdict { font-weight: 700; }
+    .v-wrong { color: var(--red); }
+    .v-weak { color: var(--yellow); }
+    .v-ok { color: var(--green); }
+    code { padding: 2px 5px; border-radius: 4px; background: #0a1424; color: #cfe3ff; font-family: Consolas, monospace; font-size: 13px; }
+    pre {
+      overflow-x: auto;
+      margin: 12px 0 0;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #091321;
+      color: #d7e7ff;
+      font: 13px/1.6 Consolas, monospace;
+    }
+    pre .cmt { color: #6b83a3; }
+    pre .hl { color: #ff9aa3; }
+    table { width: 100%; border-collapse: collapse; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(18,29,48,.88); }
+    th, td { padding: 11px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 14px; }
+    th { color: var(--cyan); background: rgba(23,38,61,.9); font-size: 13px; }
+    tr:last-child td { border-bottom: 0; }
+    td.mono { font-family: Consolas, monospace; font-size: 13px; color: var(--muted); }
+    ul, ol { margin: 8px 0 0 20px; padding: 0; }
+    li { margin: 5px 0; }
+    .loc { color: var(--cyan); font-family: Consolas, monospace; font-size: 13px; }
+    .quote {
+      margin: 12px 0;
+      padding: 10px 14px;
+      border-left: 3px solid var(--line);
+      background: rgba(11,18,32,.5);
+      border-radius: 0 8px 8px 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .quote b { color: var(--text); font-weight: 500; }
+    .callout { margin-top: 26px; border-color: rgba(245,185,66,.45); }
+    .callout p { color: var(--muted); }
+    footer { margin-top: 42px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    @media (max-width: 820px) {
+      .grid-2 { grid-template-columns: 1fr; }
+      header { padding: 25px 22px; }
+      th, td { padding: 9px 10px; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div class="eyebrow">HKG Flight Data v3 · Review of Review</div>
+      <h1>TUI 改进报告的评审意见</h1>
+      <p class="lead">对 <code>TUI-IMPROVEMENT-PLAN.html</code> 的逐条核对。方法是将报告中的每一条论断与 <code>hkg_flight/tui.py</code>、<code>poller.py</code>、<code>test_hkg_flight.py</code> 以及 README / SPEC 的实际内容对照，判断其准确性与可实施性。</p>
+      <div class="meta">
+        <span class="pill">评审对象：TUI-IMPROVEMENT-PLAN.html</span>
+        <span class="pill">核对基线：tui.py 593 行 · poller.py · 1364 行测试</span>
+        <span class="pill">结论：方向正确，诊断不足</span>
+        <span class="pill">未改动任何项目源文件</span>
+      </div>
+    </header>
+
+    <h2><span class="num">一</span>总体结论</h2>
+    <div class="callout" style="margin-top: 14px;">
+      <p style="font-size: 16px; color: var(--text);">报告的方向是对的——<strong>非阻塞模式、刷新机制、宽度适配</strong>这三条抓到了真问题，测试章节尤其扎实。但它更像一份"看起来都对"的 UX 提案，而不是基于代码的诊断：<strong>三个最严重的问题被定性轻了，四条真实缺陷完全没提，两处建议在当前代码里落不了地</strong>。如果照着这份文档排期，第一轮做完用户会发现"页面能返回了，但数据还是旧的"。</p>
+    </div>
+
+    <h2><span class="num">二</span>核对结果总表</h2>
+    <table>
+      <thead>
+        <tr><th style="width:22%">问题</th><th style="width:26%">报告的定性</th><th style="width:26%">代码中的实际情况</th><th style="width:26%">判断</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>告警/航司页退出方式</td>
+          <td>按任意键即返回离港页</td>
+          <td class="mono">timeout(1000) 导致 <span class="v-wrong">1 秒后自动关闭</span></td>
+          <td class="verdict v-wrong">定性过轻</td>
+        </tr>
+        <tr>
+          <td>后台数据刷新</td>
+          <td>不一定立即刷新</td>
+          <td class="mono">引用快照，<span class="v-wrong">永不刷新</span></td>
+          <td class="verdict v-wrong">根因判断错误</td>
+        </tr>
+        <tr>
+          <td>数字键与筛选冲突</td>
+          <td>P2 体验问题</td>
+          <td class="mono"><span class="v-wrong">含 1/2/5/6 的航班号无法输入</span></td>
+          <td class="verdict v-wrong">优先级错配</td>
+        </tr>
+        <tr>
+          <td>curses 筛选状态</td>
+          <td>可用但不明显</td>
+          <td class="mono"><span class="v-weak">完全不渲染 filter_text</span></td>
+          <td class="verdict v-weak">定性过轻</td>
+        </tr>
+        <tr>
+          <td>航司页取数</td>
+          <td>未提及</td>
+          <td class="mono">每次渲染同步调用 fetch_airlines()</td>
+          <td class="verdict v-weak">遗漏</td>
+        </tr>
+        <tr>
+          <td>首屏无数据时</td>
+          <td>未提及</td>
+          <td class="mono">每次按键触发一次同步 API 请求</td>
+          <td class="verdict v-weak">遗漏</td>
+        </tr>
+        <tr>
+          <td>Esc 键语义</td>
+          <td>返回 / 清除，两处并存</td>
+          <td class="mono">自相矛盾，需先定优先级</td>
+          <td class="verdict v-weak">方案缺陷</td>
+        </tr>
+        <tr>
+          <td>REG 隐藏后去向</td>
+          <td>放入详情视图</td>
+          <td class="mono">TUI <span class="v-weak">不存在详情视图</span></td>
+          <td class="verdict v-weak">方案悬空</td>
+        </tr>
+        <tr>
+          <td>数据刷新触发机制</td>
+          <td>比对 poller.last_update</td>
+          <td class="mono">可行，但需先重新取数据</td>
+          <td class="verdict v-ok">方向正确</td>
+        </tr>
+        <tr>
+          <td>测试补充方向</td>
+          <td>补 FakeCursesScreen 用例</td>
+          <td class="mono">当前 TUI 仅 2 个用例，判断准确</td>
+          <td class="verdict v-ok">判断准确</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2><span class="num">三</span>定性过轻的三处</h2>
+
+    <div class="card sev-critical" style="margin-bottom:16px;">
+      <span class="tag tag-crit">严重 · 症状判断错误</span>
+      <h3>1. 告警页不是"按任意键返回"，而是 1 秒后自动关闭</h3>
+      <div class="quote">报告原文：<b>"<code>cmd_alerts()</code> 和 <code>cmd_airlines()</code> 在渲染后直接调用 <code>getch()</code>，用户按任意键即返回离港页。"</b></div>
+      <p>构造函数里设了 <code>stdscr.timeout(1000)</code>，因此 <span class="loc">tui.py:504</span> 的 <code>getch()</code> 最多阻塞 1 秒就返回 <code>-1</code>。结果是不管用户按不按键，页面都会在一秒内自己退回离港页——用户根本来不及读完一条告警。</p>
+      <pre><span class="cmt"># tui.py:257</span>
+stdscr.timeout(1000)  <span class="cmt"># 1 second timeout for polling</span>
+
+<span class="cmt"># tui.py:500-505</span>
+def cmd_alerts(self):
+    self.mode = "alerts"
+    self.render()
+    <span class="hl">self.stdscr.getch()</span>   <span class="cmt"># &lt;= 1s 后返回 -1，不是阻塞等待</span>
+    self.mode = "departures"</pre>
+      <p>这不是交互设计问题，而是把"轮询超时"误用成了"阻塞等待"。报告的实施顺序第 1 条应当明确写入修复这一点。</p>
+    </div>
+
+    <div class="card sev-critical" style="margin-bottom:16px;">
+      <span class="tag tag-crit">严重 · 根因判断错误</span>
+      <h3>2. 数据不是"刷新不及时"，而是永不刷新</h3>
+      <div class="quote">报告原文：<b>"Poller 在后台更新 <code>today_records</code>，界面缺少明确的自动刷新和数据来源提示。"</b> → 建议"记录上次已渲染的 <code>poller.last_update</code>，当时间戳变化时刷新"。</div>
+      <p>真正的原因在引用语义上：<code>load_view()</code> 拿到的是 poller 列表<strong>对象的引用</strong>，而 <code>Poller.refresh_today()</code> 是<strong>重新绑定</strong> <code>self.today_records = new_records</code>。TUI 手里永远是启动那一刻的旧列表；<code>visible_flights()</code> 又只在列表为空时才重新加载，所以数据一旦首次加载成功就再也不会变。</p>
+      <pre><span class="cmt"># tui.py:267 —— 只取一次引用</span>
+self.today_records = self.poller.today_records
+
+<span class="cmt"># poller.py:112-114 —— 这里是重新绑定，不是原地修改</span>
+with self._lock:
+    <span class="hl">self.today_records = new_records</span>
+    self.last_update = datetime.now()</pre>
+      <p>仅比对 <code>last_update</code> 治不了这个病：时间戳会变，但 TUI 仍持有旧列表。正确顺序是<strong>先重新取 <code>poller.today_records</code>，时间戳只作为触发条件</strong>。另外补充一点：<code>poller.last_update</code> 目前在整个 TUI 里没有任何读取方。</p>
+    </div>
+
+    <div class="card sev-critical">
+      <span class="tag tag-crit">严重 · 优先级错配</span>
+      <h3>3. 数字键冲突不是"体验不明显"，是航班号打不出来</h3>
+      <div class="quote">报告原文：筛选"<b>可用但不明显</b>"，并建议用 <code>/</code> 进入搜索模式，列为 <b>P2 第 5 步</b>。</div>
+      <p><code>handle_key()</code> 中 <code>1/2/5/6/W</code> 的分支排在可打印字符分支之前，因此这些字符永远不会进入筛选串。后果是 <code>CX261</code>、<code>HX535</code> 这类航班号<strong>根本无法输入</strong>——而按航班号查找正是航班看板最主要的操作。</p>
+      <pre><span class="cmt"># tui.py:536-564</span>
+elif ch == ord("1"):  self.set_mode("departures")   <span class="cmt"># 1 被截走</span>
+elif ch == ord("2"):  self.set_mode("arrivals")     <span class="cmt"># 2 被截走</span>
+elif ch == ord("5"):  self.cmd_alerts()             <span class="cmt"># 5 被截走</span>
+elif ch == ord("6"):  self.cmd_airlines()           <span class="cmt"># 6 被截走</span>
+elif ch in (ord("w"), ord("W")): self.cmd_web()
+...
+elif 32 &lt;= ch &lt; 127:  self.filter_text += chr(ch)  <span class="cmt"># 永远到不了这里</span></pre>
+      <p>这属于功能阻塞，应进 P1；放在 P2 第 5 步，等于让这个 bug 多活两个迭代。</p>
+      <p>同类偏差：报告说 curses 下筛选"不够明显"，实际情况更糟——<code>_render_flights()</code> <strong>完全没有渲染 <code>filter_text</code></strong>（simple TUI 反而会打印 <code>Filter: '...'</code>），用户是在盲打。</p>
+    </div>
+
+    <h2><span class="num">四</span>报告遗漏的问题</h2>
+    <div class="grid-2">
+      <section class="card sev-major">
+        <span class="tag tag-major">遗漏</span>
+        <h3>航司页每次渲染都发网络请求</h3>
+        <p><code>_render_airlines()</code> 直接调用 <code>api.fetch_airlines()</code>；缓存失效或无缓存时这是一次同步 HTTP，被放在渲染路径上。航司模式下每按一次键就可能触发一次请求。</p>
+        <p class="loc">tui.py:460</p>
+      </section>
+      <section class="card sev-major">
+        <span class="tag tag-major">遗漏</span>
+        <h3>首屏无数据时，每次按键触发同步请求</h3>
+        <p><code>visible_flights()</code> 发现 <code>today_records</code> 为空就调用 <code>load_view()</code>，而后者会同步 <code>api.fetch_flights()</code>。API 不通时，界面会每一次按键都卡住数秒。</p>
+        <p class="loc">tui.py:281-282</p>
+      </section>
+      <section class="card sev-minor">
+        <span class="tag tag-minor">遗漏</span>
+        <h3><code>cmd_search()</code> / <code>prompt()</code> 是死代码</h3>
+        <p><code>handle_key()</code> 中没有任何分支调用 <code>cmd_search()</code>，它从未被执行过。报告建议"给它明确的按键绑定"，却没说明它当前不可达。附带隐患：<code>prompt()</code> 中 <code>addstr(h-1, 0, label.ljust(w))</code> 写满最后一行会抛 curses 异常。</p>
+        <p class="loc">tui.py:471-498</p>
+      </section>
+      <section class="card sev-minor">
+        <span class="tag tag-minor">遗漏 · 前置依赖</span>
+        <h3>"数据来源"字段根本不存在</h3>
+        <p>报告要求显示 <code>Cached data</code>，但 <code>Poller</code> 只在日志里写"Using cached data"，对象上没有可读取的来源标记——<code>last_update</code> 无论走 API 还是走缓存都会更新。要显示来源，必须先给 Poller 增加 <code>last_source</code>，这是一处前置改动。</p>
+        <p class="loc">poller.py:93-94, 112-114</p>
+      </section>
+    </div>
+
+    <h2><span class="num">五</span>方案自身的漏洞</h2>
+    <div class="grid-2">
+      <section class="card sev-major">
+        <span class="tag tag-major">自相矛盾</span>
+        <h3>Esc 键被赋予两种语义</h3>
+        <p>P1 导航一节写"Esc 返回上一模式"，P2 搜索一节写"Esc 清除筛选"。而当前代码与 README 都是"清除筛选"。必须先定优先级，否则实现阶段必然返工。</p>
+        <p class="loc">README.md:116 · tui.py:547</p>
+      </section>
+      <section class="card sev-major">
+        <span class="tag tag-major">方案悬空</span>
+        <h3>REG 移出后无处安放</h3>
+        <p>报告建议"REG 可放入详情视图"，但 TUI 压根没有详情视图（只有 CLI 的 <code>--details</code>）。要么直接砍掉 REG，要么把"新建详情视图"单列成一项任务。</p>
+      </section>
+      <section class="card sev-minor">
+        <span class="tag tag-minor">缺少断点</span>
+        <h3>给了字段优先级，却没给降级规则</h3>
+        <p>报告给出核心字段优先级，但没说 60 列砍什么、40 列砍什么；而测试计划又要求覆盖 40/60/80/120 列。实现者只能自己拍脑袋，测试结果也无从判定对错。</p>
+      </section>
+      <section class="card sev-minor">
+        <span class="tag tag-minor">与 SPEC 冲突</span>
+        <h3>目标界面与项目自身的规格书不一致</h3>
+        <p>SPEC.md 第 163 行写的是 <code>[1]Search [2]ByDate [3]Departures [4]Arrivals</code>，而报告的目标界面沿用代码的 <code>1=Dept / 2=Arr</code>，却未指出这处文档与代码的不一致。同理 SPEC.md 第 175、191 行仍在写 ↑/↓ 滚动（README 已修正），说明上一轮文档修复只做了一半。</p>
+        <p class="loc">SPEC.md:163, 175, 191</p>
+      </section>
+    </div>
+
+    <h2><span class="num">六</span>报告中判断准确的部分</h2>
+    <div class="card">
+      <span class="tag tag-ok">值得保留</span>
+      <ul>
+        <li><strong>统一页面导航</strong>：确实应把 <code>mode</code> 切换与按键处理收敛到 <code>run()</code> / <code>handle_key()</code>，这是全篇最有价值的一条。</li>
+        <li><strong>压缩航班行</strong>：当前固定列宽合计约 83 列（含 REG），在 80 列终端必然溢出，判断属实。</li>
+        <li><strong>航司页只显示当前屏幕</strong>：<code>airlines[:h - 2]</code> 之后的项目完全不可见，描述准确。</li>
+        <li><strong>测试章节</strong>：全篇最扎实。<code>FakeCursesScreen</code> 已存在，当前 TUI 只有 2 个用例（仅覆盖告警/航司渲染与 filter 输入/退格/清除），补测试的方向判断准确，可以直接执行。</li>
+        <li><strong>分三轮推进、每轮配套回归测试</strong>：节奏合理，应当保留。</li>
+      </ul>
+    </div>
+
+    <h2><span class="num">七</span>建议对报告做的修订</h2>
+    <ol>
+      <li>把<strong>"数据永不刷新"</strong>与<strong>"航班号无法输入"</strong>提到 P1；P1 第 2 条补明根因是<strong>引用快照</strong>，而非刷新时机。</li>
+      <li>实施顺序第 1 条补上<strong>"修复 1 秒自动关闭（timeout 误用）"</strong>——这是当前用户最能直接感知的症状。</li>
+      <li>新增一节<strong>"前置依赖"</strong>：Poller 增加 <code>last_source</code>；航司数据改为缓存优先且移出渲染路径；<code>today_records</code> 为空时增加退避策略。</li>
+      <li>明确 <strong>Esc 的唯一语义</strong>，并给出 40 / 60 / 80 列的具体列裁剪表。</li>
+      <li>补一句：本次改动需同步修正 <strong>SPEC.md 第 163、175、191 行</strong>，避免再次出现"文档写了、代码没有"。</li>
+    </ol>
+
+    <footer>
+      评审：TUI-PLAN-REVIEW.html · 核对基线为 <code>hkg_flight/tui.py</code>（593 行）、<code>hkg_flight/poller.py</code>、<code>hkg_flight/api.py</code>、<code>test_hkg_flight.py</code>（1364 行）、<code>README.md</code> 与 <code>SPEC.md</code>。<br>
+      本次为只读评审，未修改任何现有项目文件；本文件为新增的评审报告。
+    </footer>
+  </main>
+</body>
+</html>

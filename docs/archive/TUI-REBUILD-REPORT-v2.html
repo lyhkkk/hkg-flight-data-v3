@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HKG Flight Data — 新 TUI 重建开发报告 Rev 2</title>
+<style>
+:root{--paper:#edf1f3;--ink:#173346;--muted:#526978;--rule:#c4d0d7;--navy:#193c52;--blue:#167088;--amber:#edb64a;--red:#b64245;--green:#267451;--white:#fff;--screen:#122937;--screen-text:#e2edf1}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.8 "Segoe UI","Microsoft YaHei",sans-serif}a{color:var(--blue);text-underline-offset:3px}a:focus-visible,button:focus-visible,textarea:focus-visible,summary:focus-visible{outline:3px solid var(--amber);outline-offset:4px}.shell{max-width:1340px;margin:auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:34px;padding:30px 28px 70px}aside{position:sticky;top:24px;align-self:start;font-size:13px}.brand{font:700 32px/1.1 Consolas,monospace;letter-spacing:-2px;color:var(--navy)}.brand small{display:block;font:12px/2 "Segoe UI",sans-serif;letter-spacing:.15em;color:var(--muted)}nav{display:grid;margin-top:28px;border-top:2px solid var(--navy)}nav a{padding:8px 0;text-decoration:none;border-bottom:1px solid var(--rule)}.side-note{font-size:12px;color:var(--muted);margin-top:24px}.cover{background:var(--navy);color:var(--white);padding:36px 34px 0;overflow:hidden}.kicker{font:12px/1.6 Consolas,monospace;letter-spacing:.1em;color:var(--amber)}h1{font-size:clamp(32px,4vw,52px);line-height:1.2;letter-spacing:-1px;margin:20px 0}h1 span{display:block;color:#bad2df;font-size:.5em;font-weight:400;margin-top:14px;letter-spacing:0}.cover p{max-width:740px;color:#d6e3ea;font-size:17px}.ticket{display:grid;grid-template-columns:repeat(3,1fr);margin:30px -34px 0;background:#102d41;border-top:1px solid #4d6878}.ticket div{padding:14px 20px;border-right:1px solid #4d6878}.ticket small{display:block;color:#adc5d3;font:11px/1.7 Consolas,monospace}.ticket strong{font-size:14px;font-weight:600}section{margin-top:42px}h2{font-size:25px;line-height:1.4;padding-bottom:12px;border-bottom:2px solid var(--navy);margin:0 0 20px}h2 .id{font:14px Consolas,monospace;color:var(--blue);margin-right:12px}h3{font-size:18px;line-height:1.5;margin:22px 0 10px}p{margin:10px 0 15px}.lead{font-size:19px;line-height:1.7}strong{font-weight:650}.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}.panel{background:var(--white);padding:20px;border:1px solid var(--rule)}.panel h3{margin-top:0}.notice{padding:17px 20px;border-left:5px solid var(--amber);background:#fff6df}.notice.blue{border-color:var(--blue);background:#e0edf1}.notice.red{border-color:var(--red);background:#f9e9e8}.notice p:last-child{margin-bottom:0}.label{font:12px/1.5 Consolas,"Microsoft YaHei",monospace;display:inline-block;padding:3px 8px;background:#d8e5eb;color:var(--navy)}.pending{background:#fff0c8;color:#76510b}.table-scroll{overflow:auto;border:1px solid var(--rule)}table{border-collapse:collapse;width:100%;font-size:14px;background:var(--white)}th,td{padding:12px 13px;vertical-align:top;text-align:left;border-bottom:1px solid var(--rule)}th{background:#dbe5eb;color:var(--navy);font-size:12px}tr:last-child td{border-bottom:0}td:first-child{font-weight:600}ul,ol{padding-left:22px;margin:8px 0 14px}li{margin:6px 0}code{font:13px/1.6 Consolas,monospace;background:#dde6eb;padding:2px 4px;overflow-wrap:anywhere}pre{font:13px/1.65 Consolas,"Microsoft YaHei",monospace;padding:19px;background:#e0e8ed;overflow:auto;tab-size:2}pre code{background:none;padding:0}.screen{background:var(--screen);color:var(--screen-text);border-top:6px solid var(--amber);padding:0}.screen-title{padding:9px 16px;border-bottom:1px solid #456171;color:#a9c5d4;font:12px/1.6 Consolas,monospace}.screen pre{margin:0;background:none;color:inherit;line-height:1.6;font-size:12px}.screen .hot{color:#ffd279}.caption{font-size:12px;color:var(--muted)}.phase{display:grid;grid-template-columns:92px minmax(0,1fr);gap:18px;padding:20px 0;border-bottom:1px solid var(--rule)}.phase b{font:700 21px/1.5 Consolas,monospace;color:var(--blue)}.phase h3{margin:0 0 8px}.phase p{margin:4px 0}.small{font-size:13px;color:var(--muted)}.swatches{display:flex;flex-wrap:wrap;gap:10px}.swatch{padding:6px 10px;background:var(--white);border:1px solid var(--rule);font-size:12px}.swatch i{display:inline-block;width:10px;height:10px;margin-right:7px}.prompt-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}button{border:0;background:var(--navy);color:white;padding:11px 18px;font:14px "Microsoft YaHei",sans-serif;cursor:pointer}button:hover{background:var(--blue)}textarea{display:block;width:100%;min-height:230px;resize:vertical;padding:18px;background:white;border:1px solid var(--rule);color:var(--ink);font:14px/1.9 Consolas,"Microsoft YaHei",monospace;margin-top:14px}details{border:1px solid var(--rule);padding:15px;background:white;margin:18px 0}summary{cursor:pointer;font-weight:650}.decision-list{list-style:none;padding-left:0}.decision-list li{padding:10px 0;border-bottom:1px solid var(--rule)}.decision-list li:before{content:"□";margin-right:12px;color:var(--blue)}footer{border-top:2px solid var(--navy);padding-top:20px;margin-top:42px;font-size:12px;color:var(--muted)}
+@media(max-width:980px){.shell{grid-template-columns:1fr;padding:20px 18px 50px;gap:24px}aside{position:static}nav{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:12px}nav a{padding:4px 0}.side-note{display:none}.brand{font-size:25px}.brand small{display:inline;margin-left:12px;letter-spacing:.05em}.cover{padding:28px 24px 0}.ticket{margin:24px -24px 0}}
+@media(max-width:620px){.two{grid-template-columns:1fr}.ticket{grid-template-columns:1fr}.ticket div{border-right:0;border-bottom:1px solid #4d6878;padding:10px 24px}.phase{grid-template-columns:1fr;gap:2px}h2{font-size:22px}th,td{padding:10px;min-width:110px}.cover p{font-size:15px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{body{background:white;font-size:11px}.shell{display:block;padding:0;max-width:none}aside,button,#copy-status{display:none}.cover{background:white;color:var(--ink);padding:15px 0}.cover p,h1 span{color:var(--muted)}.ticket{margin:20px 0;background:#eee;color:var(--ink)}.ticket small{color:var(--muted)}section{margin-top:24px}h2,h3{break-after:avoid}.panel,.notice,pre,tr{break-inside:avoid}.screen{background:#eee;color:var(--ink)}.screen-title{color:var(--muted)}.screen .hot{color:var(--ink)}.table-scroll{overflow:visible}pre{white-space:pre-wrap;font-size:10px}textarea{display:none}.print-prompt{display:block!important;font-size:11px}a{color:inherit}footer{margin-top:20px}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside aria-label="报告目录">
+<div class="brand">HKG<span style="color:var(--blue)"> / </span>OPS<small>TERMINAL REBUILD BRIEF</small></div>
+<nav>
+<a href="#decision">重建决策</a><a href="#baseline">现状与证据</a><a href="#scope">产品范围</a><a href="#experience">目标界面</a><a href="#interaction">交互契约</a><a href="#architecture">架构与接口</a><a href="#reliability">数据与可靠性</a><a href="#migration">迁移与兼容</a><a href="#delivery">开发阶段</a><a href="#acceptance">验收矩阵</a><a href="#review">请你审阅</a><a href="#prompt">单次开发 Prompt</a>
+</nav>
+<p class="side-note">这是新建方案，不是旧计划的补丁清单。<br><br>仅提案 · 未实施<br>2026-09-09<br><br><a href="TUI-IMPROVEMENT-PLAN.html">对照原改进计划 ↗</a></p>
+</aside>
+<main>
+<header class="cover">
+<div class="kicker">DEVELOPMENT REPORT / PROPOSED / REV 2</div>
+<h1>重建终端航班工作台<span>从“能显示列表”到“可以持续使用的航班看板”</span></h1>
+<p>推翻的是旧 TUI 的渲染、输入与页面组织，不是已经积累的航班业务逻辑；以一套状态模型、一条数据更新路径和一个主交互界面，重新建立可验证的使用体验。本版已整合第三方评审中接受或修正后接受的意见。</p>
+<div class="ticket"><div><small>RECOMMENDATION</small><strong>Textual 主界面 · 可选增强</strong></div><div><small>COMPATIBILITY</small><strong>业务底座保留 · 运行时分层</strong></div><div><small>REVIEW GATE</small><strong>先批准方案，再进入开发</strong></div></div>
+</header>
+
+<section id="decision">
+<h2><span class="id">01</span>整体决策：前端重建，业务保留</h2>
+<p class="lead">我建议新 TUI 不再继续修补 curses，而是采用 <strong>Textual</strong> 作为唯一的完整交互界面；保留标准库 CLI/Web 和一个诚实、简单的文本降级入口。</p>
+<div class="notice"><strong>这不是无代价的替换。</strong>推荐方案需要你批准“新 TUI 允许第三方可选依赖，运行环境提升为 Python 3.11+”；基础包仍保持 Python 3.7+ 契约。如果必须坚持所有界面零依赖且支持 3.7，应改选“新状态内核 + curses 渲染器”，而不是悄悄放宽原项目承诺。</div>
+<div class="two" style="margin-top:18px">
+<div class="panel"><h3>用户得到什么</h3><ul><li>启动先看到界面，不再等网络请求结束。</li><li>离港、到达、告警、航司都是可长期停留的页面。</li><li>搜索输入不会被数字、W、Q 快捷键吞掉。</li><li>选中航班后看完整详情，刷新不会无故跳回首行。</li><li>明确知道数据日期、来源、更新时间和失败原因范围。</li></ul></div>
+<div class="panel"><h3>维护者得到什么</h3><ul><li>界面只读快照，不在渲染函数里请求网络。</li><li>数据、交互、呈现各有明确所有者。</li><li>核心行为可以脱离真实 API、真实终端测试。</li><li>不再维护两套全功能 TUI，也不引入泛用插件系统。</li><li>允许渐进替换，但旧实现有明确退场条件。</li></ul></div>
+</div>
+<h3>真实可选路线</h3>
+<div class="table-scroll"><table><thead><tr><th>路线</th><th>优势</th><th>成本 / 不选择的原因</th><th>结论</th></tr></thead><tbody>
+<tr><td>H · 条件性紧急止血</td><td>在重建延期且旧 TUI 正被高频使用时，先收束退出清理、快照读取和航司加载卡顿</td><td>正确的 snapshot/版本/异步加载并非三个孤立小补丁；若为临时实现，可能形成第三条待删除路径</td><td><strong>仅按部署紧迫性启用，不是重建前置</strong>；产出的接口必须直接成为 G1 地基</td></tr>
+<tr><td>A · 在旧 curses 上完整修补</td><td>改动较小，符合原改进计划</td><td>渲染、数据和输入仍容易纠缠；适合延续旧产品，不满足本次重建设想</td><td>作为保守备选，原计划保留</td></tr>
+<tr><td>B · 从零实现 curses + 状态模型</td><td>守住标准库与 Python 3.7；复用已有终端技能</td><td>焦点、输入法、弹窗、宽字符、布局及跨平台能力仍需自己承担</td><td>若零依赖全功能是硬约束，选择此路线</td></tr>
+<tr><td>C · Textual 可选主界面</td><td>借助成熟终端框架组织布局、输入和可测试交互</td><td>新增依赖、运行时分层、打包矩阵；框架升级需要管理</td><td><strong>推荐，但以 G0 兼容性验证为准</strong></td></tr>
+<tr><td>D · Web / 桌面界面替代 TUI</td><td>图形表现空间更大</td><td>改变终端使用方式，且项目已有 Web；另开产品战线</td><td>不属于本次范围</td></tr>
+</tbody></table></div>
+<div class="notice blue"><strong>止血决策规则：</strong>若重建排期超过两周且旧 TUI 是当前生产工作流，可先做 H；若批准后立即进入 G0/G1，则把同样问题直接作为第一条纵向路径，避免先给旧 curses 新增一套临时协议。预估 0.5–1 人日只能作为评审方的粗估，必须在确定快照语义和测试范围后重新估算。</div>
+<p class="caption">Textual 是候选技术决策，不是“已经安装并验证”的事实；本轮没有查询其最新版本，也不虚构最低支持版本或具体框架方法。阶段 G0 必须查阅当时的官方文档与发行元数据，选择并实际验证依赖范围。</p>
+</section>
+
+<section id="baseline">
+<h2><span class="id">02</span>重建依据：代码实际在哪里受限</h2>
+<div class="table-scroll"><table><thead><tr><th>已检查的证据</th><th>当前事实</th><th>对新设计的约束</th></tr></thead><tbody>
+<tr><td><code>hkg_flight/tui.py</code></td><td>约 593 行，包含 curses 和 simple 两条实现；告警/航司各自读取一次按键后回到离港；航司请求发生在渲染中</td><td>统一页面状态；禁止渲染 I/O；非主页面也必须持续刷新</td></tr>
+<tr><td><code>CursesTUI.run / load_view</code></td><td>主循环超时返回时不检查新快照；TUI 持有旧列表引用；固定每页 20 条与可见行数分离</td><td>按数据版本更新；视口与选择分离；小高度不能跳过未显示行</td></tr>
+<tr><td><code>poller.py</code></td><td>写列表与 last_update 时加锁，但 get_today 返回内部列表；告警 old_map 比对在快照锁外读取；没有来源、请求结果、快照日期等完整元数据；start 同步首刷后线程立即再刷</td><td>原子防御性快照必须覆盖读、写、版本与告警比较基线；明确启动与刷新唯一所有者；不能把 last_update 当作 API 成功时间</td></tr>
+<tr><td><code>cli.py</code></td><td>显式 tui 与默认分支分别启动 Poller，再进入 TUI；没有 finally，也没有调用 poller.stop()/web_server.stop()；正常主进程结束可能释放 daemon 资源，但嵌入、测试和异常路径没有可验证的有序清理；ImportError 时回落 simple</td><td>重建真实启动与所有权路径，而非只新增一份孤立 UI 文件；退出结果不能依赖进程终止碰巧清理</td></tr>
+<tr><td><code>api.py / alerts.py / utils.py</code></td><td>航班接口用 None 表示失败；航司失败可返回空列表；告警查询已有深拷贝；规范化保留代码共享字段但不生成 registration，现有 _merge_fvm_data 未进入 TUI 装配路径</td><td>保留业务语义；需要可选元数据接口；首版完全不显示 REG，未来只有真实装配路径稳定提供后才另行引入</td></tr>
+<tr><td><code>pyproject.toml / README / CI</code></td><td>基础运行时为 Python 3.7+、无必装第三方包；CI 覆盖 3.7 / 3.11 / 3.13。PROJECT-STATUS 的环境栏写 3.11+，不是升级授权</td><td>新增依赖必须为可选项；不能让顶层导入 Textual 导致旧 Python 的 CLI 失效</td></tr>
+<tr><td><code>SPEC.md</code></td><td>旧示意图仍有 Search / By Date 的数字键；旧章节提及 state.json 比对，而 Poller 实际用内存快照</td><td>实施时同步当前事实；本提案不把历史文字当作已实现能力，不顺带做跨重启告警</td></tr>
+<tr><td><code>test_hkg_flight.py</code></td><td>已有 FakeCursesScreen、TUI / Poller / Web 测试；curses 不可用时相关测试跳过</td><td>保留业务回归，新增不依赖 curses 的真实入口与界面交互测试</td></tr>
+</tbody></table></div>
+<p class="small">本轮为静态阅读，不声称旧问题已现场复现或修复，也未重新运行产品测试。原改进计划仍是独立的“原地改进”备选；新提案未获批准前，不覆盖原计划、不更改现有使用文档。</p>
+</section>
+
+<section id="scope">
+<h2><span class="id">03</span>产品范围：航班工作台，不是航空运营系统</h2>
+<div class="two">
+<div class="panel"><span class="label">首个完整版本 / MUST</span><h3>四页 + 详情 + 帮助</h3><ul><li><strong>离港 / 到达：</strong>列表、行选择、滚动、字段搜索、状态与航司筛选、结果计数。</li><li><strong>详情：</strong>主航班号、代码共享、日期时间、完整路线、原始状态、登机门/停机位及已有附加字段。</li><li><strong>告警：</strong>最新在前、滚动、字段变化、航班详情关联；只读，不新增确认或删除。</li><li><strong>航司：</strong>代码/名称搜索，选中后把航司筛选带回最近的航班页。</li><li><strong>全局：</strong>数据健康、手动刷新、Web 开关及失败反馈、帮助、可靠退出。</li></ul></div>
+<div class="panel"><span class="label">明确不做 / NOT NOW</span><h3>不让“重写”无限扩张</h3><ul><li>不重写官方 API、缓存格式、CLI 查询规则、告警产生/消除规则或 Web HTTP 契约。</li><li>不做航图、订阅推送、账户、航班编辑、告警确认、批量导出或插件市场。</li><li>不做历史日期切换、多日并行轮询和跨重启告警恢复。</li><li>不新增 FVM 自动融合；首版完全不显示 REG，未来只有真实装配路径稳定提供后才另行评审引入。</li><li>不持久化收藏、主题、视图状态；首版只保留会话内状态。</li><li>不承诺 Textual 与旧 curses 的双主线长期维护。</li></ul></div>
+</div>
+<p><strong>“重做”的界线：</strong>允许为可靠 UI 对 Poller/API 增加向后兼容的快照、请求状态和启动控制，以及收束 TUI 启停路径；这不是业务层零改动，而是<strong>只改支撑新交互所必需的接口</strong>。</p>
+</section>
+
+<section id="experience">
+<h2><span class="id">04</span>目标界面：把“机场出发屏”做成可操作工作台</h2>
+<p>视觉方向采用<strong>机场信息板的清晰行列 + 值班工作台的状态条</strong>。终端使用等宽字体，由终端自身决定字体；不依赖 emoji、不堆大仪表卡片、不用动画模仿翻页牌。高亮只服务于选中行、变化与异常。</p>
+<div class="swatches"><span class="swatch"><i style="background:#122937"></i>底色 #122937</span><span class="swatch"><i style="background:#e2edf1"></i>正文 #E2EDF1</span><span class="swatch"><i style="background:#edb64a"></i>关注 #EDB64A</span><span class="swatch"><i style="background:#79cbb4"></i>正常 #79CBB4</span><span class="swatch"><i style="background:#ef9290"></i>异常 #EF9290</span><span class="swatch"><i style="background:#8ec9df"></i>焦点 #8EC9DF</span></div>
+<h3>宽终端：列表为主，选中即看详情</h3>
+<div class="screen"><div class="screen-title">DESIGN MOCK / WIDE ≥ 120 columns / 以下数据均为布局示例，不代表实时航班</div><pre> HKG FLIGHT  |  Data date 2026-09-09  |  Source API  |  API OK 08:30:12 +08:00
+ <span class="hot">[1 DEPARTURES]</span>  [2 ARRIVALS]  [5 ALERTS 2]  [6 AIRLINES]       Poll ON   Web OFF
+ ─────────────────────────────────────────────────────────────────────────────
+ Search: CX                 Airline: ALL   Status: ALL     Matches 3 / Total 408
+
+ TIME   FLIGHT   DEST     STATUS       GATE  TERM   │ SELECTED FLIGHT
+<span class="hot"> 08:35  CX759    SIN      Boarding     62    T1   &gt; │ CX759 · Departure</span>
+ 08:45  CX252    LHR      Delayed      21    T1     │ HKG -&gt; SIN
+ 09:05  CX880    LAX      Scheduled    32    T1     │ Scheduled 08:35
+                                                   │ Status    Boarding
+                                                   │ Gate      62   Terminal T1
+                                                   │ Codeshare [only if supplied]
+                                                   │
+                                                   │ RECENT CHANGE (example)
+                                                   │ 08:29 Gate 61 -&gt; 62
+ ─────────────────────────────────────────────────────────────────────────────
+ Rows 1-3 / 3  |  Updated from API 4s ago  |  Refresh: idle
+ / Search   Enter Detail   f Filter   r Refresh   w Web   ? Help   q Quit</pre></div>
+<h3>普通终端：保留核心字段，详情按需打开</h3>
+<div class="screen"><div class="screen-title">DESIGN MOCK / NORMAL 80–119 columns / 详情为覆盖面板，不挤压列表</div><pre> HKG | 2026-09-09 | API 08:30 +08:00 | Poll ON | Web OFF
+ <span class="hot">1 Departures</span>  2 Arrivals  5 Alerts(2)  6 Airlines
+ Search: —                         Matches 408 / Total 408
+ TIME   FLIGHT   DEST   STATUS         GATE   TERM
+<span class="hot"> 08:35  CX759    SIN    Boarding       62     T1   &gt;</span>
+ 08:45  CX252    LHR    Delayed        21     T1
+ 09:05  CX880    LAX    Scheduled      32     T1
+ ...
+ Rows 1-15 / 408 | API OK 4s ago
+ / Search  Enter Detail  r Refresh  ? Help  q Quit</pre></div>
+<h3>窄终端：主动降密度，不把一行硬截成乱码</h3>
+<div class="screen"><div class="screen-title">DESIGN MOCK / COMPACT 40–79 columns / 一条航班两行；快捷键提示分级</div><pre> HKG 09-09 | CACHE / STALE
+ <span class="hot">1 DEP</span>  2 ARR  5 ALT  6 AIR
+<span class="hot"> &gt; CX759    08:35    Boarding</span>
+   SIN                 Gate 62
+   CX252    08:45    Delayed
+   LHR                 Gate 21
+   ...
+ 1-6 / 408 | r Retry
+ / Search  Enter Detail  ? Help</pre></div>
+<p class="caption">上图表达信息层级，不是逐字符严格对齐的终端快照；40 列是待验证候选门槛，不是既成支持承诺，G0 若无法保证可读就应上调并在更窄终端显示尺寸提示；开发时必须用目标尺寸的真实渲染测试替换示意证据。</p>
+<div class="table-scroll"><table><thead><tr><th>尺寸策略</th><th>布局规则</th><th>不变量</th></tr></thead><tbody>
+<tr><td>≥120 列、≥24 行</td><td>列表 + 约 32–40 列详情栏；详情栏可关闭</td><td>宽度仍不足时退回普通布局，不硬撑双栏</td></tr>
+<tr><td>80–119 列，或高度 16–23 行</td><td>单列表；Enter 打开可滚动详情</td><td>固定头尾，内容区域计算可见行数</td></tr>
+<tr><td>候选 40–79 列、≥16 行</td><td>双行紧凑记录；隐藏 TERM 等非核心列；下界由 G0 实测确认</td><td>时间、航班、状态、门/位保持可查；完整字段进详情</td></tr>
+<tr><td>低于 G0 确认下界或 &lt;16 行</td><td>尺寸提示 + 退出/帮助；恢复尺寸自动回到原视图</td><td>不报错、不清空筛选和选中状态</td></tr>
+</tbody></table></div>
+<p><strong>语义规则：</strong>离港显示 DEST/GATE，到达显示 ORIGIN/STAND；状态同时有文字和颜色；未知字段用“— / 未提供”；单色模式保留选中标记和状态文字；不把状态中的实际/预计时间误标为计划时间。</p>
+</section>
+
+<section id="interaction">
+<h2><span class="id">05</span>交互契约：先定义按键如何工作，再写界面</h2>
+<div class="table-scroll"><table><thead><tr><th>输入</th><th>浏览状态</th><th>搜索 / 输入框获得焦点时</th></tr></thead><tbody>
+<tr><td>1 / 2 / 5 / 6</td><td>离港 / 到达 / 告警 / 航司；保留熟悉的旧键位</td><td>普通文本，不切页</td></tr>
+<tr><td>/</td><td>进入当前页搜索，光标定位输入框</td><td>普通字符；不重新触发搜索</td></tr>
+<tr><td>Enter</td><td>航班/告警打开详情；航司应用筛选并返回航班页</td><td>提交搜索并回到结果列表</td></tr>
+<tr><td>Esc</td><td>关闭覆盖面板；没有覆盖面板时清除当前页筛选；告警/航司辅助页在无上述状态时返回最近的离港或到达页；离港/到达页无操作</td><td>取消本次编辑，恢复进入搜索前的条件；本次按键不继续清筛选或返回页面</td></tr>
+<tr><td>↑ / ↓、PgUp / PgDn</td><td>逐行选择、按当前视口翻动；左右键作为旧翻页兼容别名，仅列表焦点有效</td><td>服从输入框自身编辑行为</td></tr>
+<tr><td>Home / End</td><td>当前结果集首条 / 末条</td><td>输入框行首 / 行尾</td></tr>
+<tr><td>Tab / Shift+Tab</td><td>在实际可交互区域间轮转；焦点可见</td><td>正常焦点轮转；输入不会被悄悄提交成其他动作</td></tr>
+<tr><td>f / r / w / ? / q</td><td>筛选面板 / 刷新 / Web 开关 / 帮助 / 退出，字母大小写等价</td><td>普通文本；不能误启动 Web 或退出</td></tr>
+<tr><td>Ctrl+Q / Ctrl+C</td><td>全局退出并统一清理</td><td>同样有效；这是输入态的明确退出入口</td></tr>
+</tbody></table></div>
+<div class="notice blue"><strong>不要继续承诺“Q 在所有输入情境退出”。</strong>它与“能搜索包含 Q 的航班号”矛盾；新契约是 Q 在浏览态退出，输入态用 Ctrl+Q / Ctrl+C。帮助、底栏与测试必须同一口径。Esc 不维护任意页面历史栈；只允许告警/航司这两个辅助页记住最近的航班页。</div>
+<h3>搜索与状态保留</h3>
+<ul><li><strong>航班搜索：</strong>仅匹配显式白名单字段——主航班号、代码共享号、航司代码、起讫机场代码、gate、stand、terminal、状态文本；大小写不敏感、空白分词、词之间 AND、每词字段之间 OR；航班号字段另做去空格规范化，使 CX 759 可匹配 CX759；不再对整个 dict 做字符串搜索。</li><li><strong>代码共享：</strong>默认纳入匹配；详情显示匹配的共享号和主航班号，避免“搜 CX 却显示另一航司”无解释；不修改现有 CLI 的 --codeshare 语义。</li><li><strong>航司页：</strong>按 code/name 搜索；航司筛选匹配 airline_code 与主航班号前缀，代码共享是否纳入由显式开关控制，默认关闭。</li><li><strong>告警页：</strong>按航班、变化字段、前后值和状态搜索；同时间告警使用确定性次级排序；找不到当前航班时展示告警自身快照，不伪造详情。</li><li><strong>默认顺序：</strong>航班沿用计划时间顺序；告警按 raised_at 倒序；航司按代码排序。首版不增加任意列排序编辑器。</li><li><strong>每页独立保存：</strong>搜索词、结构化筛选、选中航班、视口偏移和进入详情前焦点。刷新保留选中项；项目消失时选择原位置的邻近条目并提示；筛选变化重新校正索引。</li><li><strong>即时搜索：</strong>约 150 ms 防抖作为目标，只在内存中筛选，输入一个字符绝不能触发一次 API 请求。</li></ul>
+</section>
+
+<section id="architecture">
+<h2><span class="id">06</span>架构：小接口承载复杂行为，不造新框架</h2>
+<pre>真实入口：python -m hkg_flight [tui] / hkg-flight
+                           │
+                    cli.py：选择后端
+                           │
+                 Session：启动 / 关闭所有者
+                   │                 │
+        FlightFeed 快照接口        WebServer（复用）
+                   │                 │
+             Poller / API / Cache / AlertManager
+                   │
+       不可变语义快照 + 有界 UI 通知（只保留最新版本）
+                   │
+       State + Presenter（标准库，无终端、无网络依赖）
+                   │
+          ┌────────┴─────────┐
+     Textual App          Plain Adapter
+     完整交互              可靠文本降级
+</pre>
+<p><strong>三个有实际替换用途的 seam：</strong>数据入口（真实快照 / 测试数据）、呈现入口（Textual / plain）、时钟（真实时间 / 确定性测试）。不为每个类再加一层接口，不引入通用事件总线、依赖注入容器或插件注册器。</p>
+<h3>建议文件落点（均为拟新增或拟调整）</h3>
+<pre>hkg_flight/
+  cli.py                    # 合并默认/显式 TUI 装配，添加可选 --ui
+  tui.py                    # 迁移期兼容入口；最终仅保留薄门面
+  terminal/
+    __init__.py             # 不导入 Textual
+    session.py              # 会话生命周期、命令串行化、快照桥接
+    state.py                # 页面/焦点/筛选/选择状态与纯转换
+    presenter.py            # 白名单搜索、稳定排序、字段投影
+    plain.py                # 标准库行命令降级与非 TTY 输出
+    textual_app.py          # 可选框架入口与 UI 事件映射
+    views.py                # 四页、详情、帮助、筛选面板
+    theme.tcss              # 新 TUI 样式，需打入分发包
+  poller.py                 # 原子快照、请求元数据、受控异步启动
+  api.py                    # 可选结果元数据 + 共享请求限速保护
+  alerts.py / cache.py       # 默认复用；只做必要的快照读取接入
+  web.py                    # HTTP 契约不变；必要时改为快照安全读取
+
+tests/                      # 拟新增，含 __init__.py 以支持 unittest discover
+  test_terminal_state.py
+  test_terminal_feed.py
+  test_terminal_entrypoint.py
+  test_terminal_textual.py
+  test_terminal_plain.py
+  fixtures/terminal/        # 固定时钟、离线成功/失败/缓存/变化场景
+</pre>
+<h3>关键接口与不变量</h3>
+<div class="table-scroll"><table><thead><tr><th>接口（概念契约，非现有方法）</th><th>调用者只需知道</th><th>内部负责隐藏</th></tr></thead><tbody>
+<tr><td><code>snapshot()</code></td><td>无网络、原子返回记录与版本、日期、来源、健康状态；返回值不会被后台修改</td><td>锁、缓存回退、记录与元数据一致性；深拷贝或真正不可变结构，不能只 tuple 包住可变 dict</td></tr>
+<tr><td><code>request_refresh()</code></td><td>立即返回 accepted / already_running / closed；完成通过新版本快照通知</td><td>定时/手动请求合并、限速、错误捕获、单次在途刷新</td></tr>
+<tr><td><code>dispatch(action)</code></td><td>更新会话内 UI 状态，产出新投影与必要命令</td><td>焦点、返回顺序、筛选、选中保留；自身不做网络 I/O</td></tr>
+<tr><td><code>close()</code></td><td>幂等；禁止新命令，关闭本会话拥有的资源，返回清理结果</td><td>停止定时器、屏蔽迟到消息、Web 停止、worker 退出与超时记录</td></tr>
+</tbody></table></div>
+<p><strong>行身份：</strong>首选 UI 专用 <code>(date, type, flight_number)</code>，不能只用行号，也不能假定现有 <code>key = date + flight_number</code> 在跨方向列表一定唯一；真实样本若出现同日同方向重复航段，G0 需明确扩展字段并加夹具，不修改缓存/告警键格式来掩盖问题。</p>
+</section>
+
+<section id="reliability">
+<h2><span class="id">07</span>数据可靠性：不再把“看起来新”当作“真的新”</h2>
+<h3>快照需要携带的信息</h3>
+<p><code>revision</code>、<code>records_date</code>、<code>records</code>、<code>source(api/cache/memory/none)</code>、<code>last_attempt_at</code>、<code>last_api_success_at</code>、<code>cache_saved_at</code>、<code>last_error</code>、<code>refreshing</code>、<code>polling_enabled</code>、<code>next_refresh_at</code>；告警具有 <code>alerts_revision</code> 与活跃集合，航司具有版本/加载状态。<code>cache_saved_at</code> 读取缓存文件 mtime，只代表本地缓存写入时间，不代表 HKIA 数据生成时间；stat 不可用时才是 UNKNOWN。请求失败也必须推进健康版本，即使航班内容完全没变。</p>
+<div class="table-scroll"><table><thead><tr><th>场景</th><th>展示与行为</th><th>禁止的误导</th></tr></thead><tbody>
+<tr><td>首次加载</td><td>先显示空壳与 Loading，再后台获取；缓存可用则显示 CACHE 和原始存储时间</td><td>不把 0 条等同于失败，不在 UI 线程等 15 秒</td></tr>
+<tr><td>API 成功</td><td>展示 API 成功时间；返回 [] 也属于有效成功，更新为空结果</td><td>不使用列表 truthiness 判断成功</td></tr>
+<tr><td>API 失败、有同日内存</td><td>保留最后成功内容，显示 MEMORY / ERROR，API 成功时间不前移</td><td>不静默清空列表，不伪造刚刚成功</td></tr>
+<tr><td>API 失败、仅缓存可用</td><td>展示 CACHE、cache_saved_at、请求失败状态；缓存年龄未知则明确 UNKNOWN AGE</td><td>读缓存的时刻不是数据生成时刻</td></tr>
+<tr><td>失败且无可用数据</td><td>“无法获取数据，未找到可用缓存；r 重试”，导航、帮助和退出仍工作</td><td>不显示“没有航班”来掩盖失败</td></tr>
+<tr><td>搜索无结果</td><td>显示当前条件与清除入口；保留原始总数</td><td>不触发额外刷新或把未筛选的到达/离港混入</td></tr>
+<tr><td>航司加载失败</td><td>单独标记航司错误；其他页面继续可用；失败/空列表要通过新增元数据区分</td><td>现有 fetch_airlines 返回 [] 本身不足以证明失败原因</td></tr>
+<tr><td>Web 端口占用</td><td>状态为 ERROR，显示实际端口与启动失败；可重试或继续看航班</td><td>不只看按键已触发就显示 ON</td></tr>
+</tbody></table></div>
+<ul><li><strong>过期规则：</strong>自动轮询开启时，距最新已知 API 成功或缓存保存时间超过 <code>max(2 × poll_interval, 60s)</code> 标记 STALE；时间未知显示 FRESHNESS UNKNOWN。请求失败单独标记 ERROR，不等待过期阈值；关闭轮询显示 MANUAL 与数据年龄，不宣称实时。</li><li><strong>日期/时区：</strong>首版保持现有 today_str 的系统本地日期语义，界面明确显示数据日期及时间偏移，不擅自称其为香港时间。跨本地午夜切换日期：旧数据要么暂时标明“上一数据日期”，要么显示新日 Loading，不能换了标题仍把旧数据说成今日；旧日期迟到结果不得覆盖新日结果。统一全项目到 Asia/Hong_Kong 会影响 CLI、Web、Poller、缓存键和测试，列为高优先级独立业务决策，G0 记录影响与建议，但没有额外批准不得由 TUI 局部修改。</li><li><strong>一次启动，一条轮询链：</strong>默认入口与 tui 入口统一由 Session 管理；为 Poller 增加保持旧默认行为的非阻塞启动方式供新 TUI 使用，首刷只触发一次；新 TUI 不再先同步 poller.start 再自己 fetch。</li><li><strong>--no-poll：</strong>只关闭定时刷新；仍后台首刷一次，r 可主动刷新；不得顺手开启第二条 UI 定时抓取链。</li><li><strong>并发与限速：</strong>UI 不能直接写 today_records。定时/手动刷新合并，快照发布持锁但网络请求不持快照锁；API 共享实例的请求调度需串行保护限速时点，航司请求和 Web 查询也不能绕过 0.6 秒礼貌限速。</li><li><strong>告警一致性：</strong>复用 AlertManager 的规则和防御性副本；页签数字始终表示当前活跃告警数，不表示未读，首版没有已读/确认语义；以单调只读 <code>alerts_revision</code> 通知集合变化，UI 不消费共享 new_flag，也无需把所有来源强行置于一个跨模块大锁。</li><li><strong>日志与终端：</strong>全屏会话期间，后台日志进入有界会话记录或现有日志设施，不直接在全屏上 print；退出后恢复原输出策略。外部航司名/状态去除 ESC、控制字符，作为纯文本显示，禁止解释为终端控制码或框架标记。</li><li><strong>退出：</strong>所有退出路径进入 finally；先停止接收动作并恢复终端，再等待本会话资源结束；标准库在途 HTTP 不保证可立即中断，必须有有界请求超时、迟到结果丢弃和清理超时报告，不能声称线程已经停止。只关闭自己创建的 Web/Poller，不误关闭外部借入资源。</li></ul>
+</section>
+
+<section id="migration">
+<h2><span class="id">08</span>迁移与兼容：可回退，但不永久养两套界面</h2>
+<div class="notice"><strong>推荐依赖政策：</strong>基础安装保持无必装第三方包；拟提供 <code>.[tui]</code> 可选安装组，并把它作为完整终端工作台的推荐安装方式。auto 只检测已安装依赖，绝不自动执行安装；基础安装缺 Textual 时明确提示后进入 plain。Textual 的实际版本范围、条件标记和测试依赖必须经 G0 验证后再写入 pyproject；新 TUI 支持目标为 Python 3.11 / 3.13，不声称框架最低要求就是 3.11。</div>
+<h3>拟议入口选择（下面是未来契约，目前尚未实现）</h3>
+<div class="table-scroll"><table><thead><tr><th>入口 / 条件</th><th>目标行为</th></tr></thead><tbody>
+<tr><td><code>python -m hkg_flight</code><br><code>python -m hkg_flight tui</code></td><td>默认 auto：支持的 Python + 已安装 Textual + 交互终端 → 新界面；否则明确提示原因并使用 plain；auto 不安装依赖。全局 --cache-dir/--force 与 <code>tui --port/--no-poll</code> 在现有合法位置保持语义；裸入口不新增 --port/--no-poll</td></tr>
+<tr><td><code>... tui --ui textual</code></td><td>显式要求增强界面；缺依赖、Python 不支持或非 TTY 时非零退出，提供操作提示；不静默降级</td></tr>
+<tr><td><code>... tui --ui plain</code></td><td>显式使用标准库降级；TTY 为行命令菜单，非 TTY 输出一次有限快照后退出</td></tr>
+<tr><td><code>... tui --ui legacy</code></td><td>只在迁移候选阶段保留，便于比较和回退；正式切换验收后移除，不作为长期公共契约</td></tr>
+<tr><td>非交互输入/输出、NO_COLOR</td><td>不使用 raw input、不清屏、不输出 ANSI/框架标记、不无限等待；NO_COLOR 在 Textual/TTY plain 也保留文字和焦点语义</td></tr>
+</tbody></table></div>
+<h3>Plain 模式的明确降级</h3>
+<p>复用同一数据投影与搜索规则，但使用<strong>输入一行、执行一个命令</strong>的菜单：1/2/5/6、n/p、<code>/ 搜索词</code>、<code>detail 序号</code>、r、w、help、q。屏幕按命令更新，不承诺后台自动重绘、分栏、即时搜索或完全同键位；非 TTY 仅输出默认页的有限快照并说明可用 departures/arrivals 获取列表。q/EOF/Ctrl+C 都能结束；失败无数据时返回非零状态。</p>
+<h3>打包与回退要求</h3>
+<ul><li>Python 3.7 基础环境可以导入包、运行 CLI/Web、进入 plain；可选框架导入只能在后端选择之后发生，禁止 hkg_flight.__init__ 或 terminal.__init__ 提前导入。</li><li><strong>整个随 wheel 分发的 <code>hkg_flight/</code> 源码必须能被 Python 3.7 解析</strong>，包括 Textual adapter；不得使用 <code>str | None</code>、<code>list[str]</code>、match/case 等 3.7 解析失败的语法。现有 3.7 compileall 继续扫描完整包，不设置模糊豁免；Textual 的导入和执行门槛由选择器负责。</li><li>构建 wheel 后从干净环境安装，确认样式文件和测试/演示资源按计划打包，而非只验证源码目录运行。</li><li>候选版先显式启用新界面，完成验收后才让 auto 优先选择它；切换前保留旧路径，发布后回退使用上一个版本/提交，不无限保留 legacy。</li><li>正式移除 CursesTUI、旧阻塞循环和 FakeCursesScreen 专用测试；保留其承载的业务行为回归。tui.py 可保留兼容门面，但不能留下另一套实际实现。</li><li>不删除缓存、不迁移 state.json、不修改 Web 地址绑定策略、不自动安装依赖、不替用户提交或推送。</li></ul>
+</section>
+
+<section id="delivery">
+<h2><span class="id">09</span>开发拆分：每一阶段都交付一条可运行路径</h2>
+<div class="phase"><b>G0<br><span class="small">1–2 人日</span></b><div><h3>决策冻结与风险验证</h3><p>查 Textual 官方资料与选定发行元数据，验证可选依赖隔离、整个 wheel 的 Python 3.7 可解析性、3.11/3.13 运行、Windows/Linux 中文输入、NO_COLOR、40/80/120 列与打包；核对记录身份、缓存 mtime、API/航司失败元数据和 alerts_revision；记录香港业务日期统一的独立影响；决定最小宽度是否上调。</p><p><strong>退出条件：</strong>有已验证的依赖范围、基础/增强安装路径和最小真实终端结果；若不能满足核心终端、基础包隔离或完整包 3.7 解析，停止并回到路线 B，不直接重写生产代码。</p></div></div>
+<div class="phase"><b>G1<br><span class="small">2–3 人日</span></b><div><h3>跑通纵向骨架</h3><p>从真实 CLI 入口进入新界面；接入 Session、原子快照、后台首刷与离港列表；q/异常退出执行统一清理；先写启动/刷新/关闭回归再接实现。</p><p><strong>退出条件：</strong>加载和网络超时不冻结界面，刷新唯一、可退出，CLI/Web 基线不退化。</p></div></div>
+<div class="phase"><b>G2<br><span class="small">2–3 人日</span></b><div><h3>完成航班工作流</h3><p>到达页、字段搜索、结构化筛选、稳定选择、详情、焦点与三档布局；离线场景覆盖刷新期间搜索与窗口变化。</p><p><strong>退出条件：</strong>一条从切页 → 搜索 → 详情 → 返回 → 刷新的真实交互测试通过，所有结果都可到达。</p></div></div>
+<div class="phase"><b>G3<br><span class="small">2–3 人日</span></b><div><h3>补齐运行场景</h3><p>告警/航司页、Web 状态、缓存/失败/过期/跨午夜、日志收束、plain 与非 TTY；不增加额外业务功能。</p><p><strong>退出条件：</strong>失败注入、端口占用、迟到响应、no-poll 和单色场景有直接证据。</p></div></div>
+<div class="phase"><b>G4<br><span class="small">2–4 人日</span></b><div><h3>验证、切换与删除旧路径</h3><p>基础/增强环境矩阵、真实 Windows 与 Linux 终端验收、wheel 安装、性能采样；同步 README/COMMANDS/SPEC/PROJECT-STATUS/部署文档和 CI；删除 legacy 后做负向搜索。</p><p><strong>退出条件：</strong>验收矩阵有实际结果、已知缺口明确、回退路径成立；提案只有在实现与证据齐全后才转 implemented。</p></div></div>
+<p><strong>预算估计：</strong>约 9–15 个工程人日；另留 2–3 人日跨平台风险缓冲。此为熟悉代码后的范围估计，不是完成日期、AI 单次生成耗时或保证；“单次 prompt”表示一次交代任务，仍需多轮内部开发与验证。</p>
+</section>
+
+<section id="acceptance">
+<h2><span class="id">10</span>验收矩阵：用能证伪的条件，而不是“更好看”</h2>
+<p>以下均为<strong>未来验收要求，当前未执行</strong>。固定夹具不少于 1,000 条航班、100 条告警、100 家航司，包含缺字段、长中文/组合字符、共享航班、空列表与失败；固定时钟，测试不能依赖实时 HKIA 返回条数。</p>
+<div class="table-scroll"><table><thead><tr><th>ID / 可观察标准</th><th>失败层</th><th>直接证据与执行路径</th></tr></thead><tbody>
+<tr><td>A1 · 两种启动入口进入同一会话；无 UI 线程网络阻塞；首次请求只有一次</td><td>CLI 装配 / 生命周期</td><td>entrypoint 集成测试调用 main([]) 与 main(['tui'])，假后端统计请求/线程；注入 15 秒延迟，真实 UI 仍可导航退出</td></tr>
+<tr><td>A2 · 四页均可持久停留，全部条目可滚动到达；1/2/5/6/W/Q 可输入搜索；Esc 只关闭一层状态，辅助页只返回最近航班页</td><td>焦点 / 输入 / 视口</td><td>Textual 交互测试逐键输入 CX261WQ，验证不切页/不启动 Web/不退出；逐次 Esc 验证不连锁触发；在小高度遍历全部结果</td></tr>
+<tr><td>A3 · 后台新快照可见；保留筛选与选中项，移除选中项后有明确降级</td><td>版本订阅 / UI 状态</td><td>注入连续快照与同版本重复通知；检查列表、详情与计数同步，不重置焦点</td></tr>
+<tr><td>A4 · 空成功、失败、缓存、过期、未知年龄可区分；缓存不会伪装成新 API 成功</td><td>Poller / API / 时间语义</td><td>feed 测试固定时间、API None/[]、内存/磁盘组合；检查 records 与所有时间元数据</td></tr>
+<tr><td>A5 · no-poll 首刷一次，之后只手动刷新；定时与 r 连按没有重复在途请求</td><td>调度 / 并发</td><td>受控时钟与 barrier 驱动并发测试，断言并发数与调用数；同时加入航司和 Web 请求验证限速</td></tr>
+<tr><td>A6 · 经 G0 确认的最小宽度，以及 40×16、60×20、80×24、120×30、160×40 与 30×8 均不越界/丢状态；若 40 列不可保证可读则上调受支持门槛并让 40 列进入明确尺寸提示</td><td>布局 / Unicode</td><td>Linux 固定框架/环境执行稳定视觉或字符串快照 + resize；Windows 执行不抛异常、关键字段、焦点与滚动的结构/行为断言；两端都检查中文、组合字符和控制码过滤，并记录真实终端验证</td></tr>
+<tr><td>A7 · 退出恢复终端，停止已拥有的资源；关闭后的消息不写 UI，Web 失败不假显示 ON</td><td>线程 / Web / 终端</td><td>q、Ctrl+C、EOF、框架异常、端口占用集成测试；注入迟到响应，检查资源停止结果与输出恢复</td></tr>
+<tr><td>A8 · Python 3.7 可 compileall 整个 hkg_flight 包且基础导入/CLI/Web/plain 不需要 Textual；增强环境真正执行 UI 测试而非全跳过</td><td>语法 / 依赖 / 分发 / CI</td><td>3.7 对 wheel 内容 compileall；干净 base 环境与 .[tui] 环境分别安装 wheel；检查顶层导入链；增强 CI 缺依赖即失败</td></tr>
+<tr><td>A9 · 非 TTY 有限退出，无 ANSI/清屏/raw input；NO_COLOR 在全部后端保留可辨识状态</td><td>降级 / 输出</td><td>plain 测试替换非 TTY stdin/stdout 并捕获输出；真终端单色检查，不用浏览器图替代</td></tr>
+<tr><td>A10 · 日期切换不把旧日记录标为今日；晚到旧请求不覆盖新日期</td><td>日期 / 事件排序</td><td>23:59 → 00:00 固定时钟与逆序响应夹具；详情和标题同时校验</td></tr>
+<tr><td>A11 · 旧业务回归保留，旧交互实现已删除；文档/帮助/实际按键一致</td><td>回归 / 结构 / 文档</td><td>原 unittest、全量 discover、ruff、编译、wheel 安装；搜索 CursesTUI/FakeCursesScreen/legacy，区分历史报告与运行代码</td></tr>
+</tbody></table></div>
+<h3>拟使用的验证命令</h3>
+<pre>python -m unittest test_hkg_flight
+python -m unittest discover -s . -p "test*.py"
+python -m compileall -q hkg_flight cleanup_alerts.py
+python -m ruff check .
+python -m pip wheel . --no-deps -w dist
+
+# 开发完成后，先在 Python 3.11/3.13 干净环境安装可选依赖与构建包，再运行：
+python -m unittest tests.test_terminal_textual
+python -m hkg_flight tui --ui textual --no-poll
+python -m hkg_flight tui --ui plain --no-poll</pre>
+<p class="small">新 tests 路径和 --ui 选项目前不存在；构建产物需在另一个干净环境按实际 wheel 文件名安装验证，不能以源码目录 import 代替。基础 CI 维持 3.7/3.11/3.13 并对完整包 compileall；增强 CI 覆盖 3.11/3.13，至少 Windows + Linux 的安装和 headless 交互。Linux 固定版本环境拥有精确快照，Windows 拥有结构/行为断言；两平台均不得整组跳过。真实终端验证仍需独立记录，macOS/SSH 未测时必须标明。</p>
+<h3>性能预算（目标，不是当前结果）</h3>
+<ul><li>在记录 CPU/OS/Python/终端版本的参考机上，离线首屏目标 ≤ 1 秒；基于增量投影/更新时 UI 操作到反馈 p95 ≤ 100 ms（搜索防抖时间单独计）；快照发布到可见目标 ≤ 500 ms。若框架表格必须全量更新，G0/G2 要先实测并调整预算，不允许用降低夹具规模规避。</li><li>连续 30 分钟、1,000 行夹具与持续刷新后，无随刷新次数线性增长的 widget、线程或通知队列；每 5 分钟记录 widget 数、线程数、通知队列长度和进程内存，保存采样轨迹而非一句“内存稳定”。</li><li>退出终端恢复目标 ≤ 2 秒；网络 worker 清理采用明确总预算，初拟 ≤ 20 秒，G0 验证现有 15 秒 HTTP 超时及排队后校准；超预算报告失败，不将 daemon 尚存当作已清理。</li><li>只更新变化投影，不无条件每秒重建整张表；小型时钟/年龄标签可轻量更新。</li></ul>
+</section>
+
+<section id="review">
+<h2><span class="id">11</span>你需要审阅的七个决定</h2>
+<ul class="decision-list"><li><strong>技术路线：</strong>接受 Textual 为主界面，而不是坚持全功能零依赖？推荐：接受，可选安装。</li><li><strong>Python 分层：</strong>新 TUI 3.11+，基础 CLI/Web/plain 继续 3.7+，同时整个分发包保持 3.7 可解析？推荐：接受，G0 必须实证。</li><li><strong>分发定位：</strong>基础安装保持零第三方依赖，<code>.[tui]</code> 成为完整工作台的推荐安装，auto 只检测不安装，缺失时提示并进入 plain？推荐：接受。</li><li><strong>交互取舍：</strong>明确搜索态；输入框中的 Q/W/数字不再是全局快捷键；Esc 不维护任意历史栈，只允许辅助页回到最近航班页？推荐：接受。</li><li><strong>首版范围：</strong>四页、详情、筛选、健康状态、Web 控制；REG、历史日期、收藏、告警已读/确认暂不做？推荐：接受。</li><li><strong>降级策略：</strong>plain 保底而非功能对等；legacy 只用于迁移期；紧急止血只在重建延期且旧 TUI 高频使用时启用？推荐：接受。</li><li><strong>实施边界：</strong>允许向后兼容补强 Poller/API/生命周期，缓存时间只读 mtime，不改缓存格式与业务规则，香港业务日期语义另行决策？推荐：接受。</li></ul>
+<div class="notice red"><strong>批准前不实施。</strong>本轮交付只有报告、提案登记和单行 prompt。没有改写 TUI、安装新依赖、清理缓存或提交代码；“推荐”不等于你已经批准。若你坚持 Python 3.7 + 标准库全功能，我会沿用产品与状态设计，但换成路线 B 并重新估算终端工作量。</div>
+<details><summary>第三方评审整合说明</summary><ul><li><strong>已直接采纳：</strong>3.7 compileall 契约、缓存 mtime 语义、参数保持/新增区分、首版删除 REG、跨平台测试分层、性能采样方法、精简 prompt。</li><li><strong>修正后采纳：</strong>Esc 改成辅助页定向返回而非历史栈；告警定义 active count + alerts_revision 而非未读；时区升为高优先级独立决策；生命周期缺陷按“无可验证有序清理”表述。</li><li><strong>保留分歧：</strong>紧急止血是条件分支而非重建必经阶段；auto 只选择已安装后端，不会自动安装依赖，真正需要批准的是推荐安装与降级政策。</li></ul></details>
+<details><summary>关键风险与明确放弃的能力</summary><ul><li><strong>框架与打包：</strong>运行时分层会增加组合测试；若发行依赖无法隔离则不能合入默认路径。</li><li><strong>真实终端：</strong>headless 通过不等于 Windows 输入法、颜色和快捷键通过；至少一次真人或真实终端记录不可省略。</li><li><strong>后台接口：</strong>刷新来源/时间并非已有事实，不能用 UI 猜测替代 API/Poller 元数据。</li><li><strong>源数据缺口：</strong>机场名称、预计时间、注册号不一定有结构化数据；只展示已提供字段，不生成看似合理的信息。</li><li><strong>兼容代价：</strong>放弃旧版“任意字符直接过滤”、simple 实时重绘幻想，以及 Python 3.7 上的完整新 UI；保留可用 CLI 与 plain。</li><li><strong>范围膨胀：</strong>时区统一、持久化和 Web 重写不随本次顺带推进；出现必须破坏契约的问题先回报，不用重构名义跨过审批。</li></ul></details>
+</section>
+
+<section id="prompt">
+<h2><span class="id">12</span>一句话，单次发送的开发 Prompt</h2>
+<p>下面是一整句指向性开发指令，<strong>只在你审阅并批准 Rev 2 后使用</strong>；Rev 2 是唯一详细开发规范，prompt 不再重复一份容易漂移的压缩规格。另附同内容纯文本文件方便复制。</p>
+<div class="prompt-head"><button type="button" id="copy-prompt">复制完整一句话</button><a href="TUI-REBUILD-PROMPT-v2.txt">打开纯文本</a><span id="copy-status" role="status" aria-live="polite"></span></div>
+<label class="small" for="prompt-text">单行开发指令（自动换行显示，单句）</label>
+<textarea id="prompt-text" readonly spellcheck="false">请在 O:\lyh\Projects\hkia\hkg-flight-data-v3 中实施我已批准的 TUI-REBUILD-REPORT-v2.html，以该报告第 03/08 节的范围与兼容边界、第 09 节 G0→G4 阶段和第 10 节 A1→A11 验收标准作为唯一详细开发规范，先完整阅读报告与关联 proposed 提案、在 G0 止损门槛通过后再测试驱动完成真实装配路径并逐阶段回读对应契约，未经批准不得扩展功能、改变持久化格式、局部改变业务日期语义、删除用户数据或自动提交推送，如必须偏离已批准决策则停止并报告，否则自主完成代码、测试、文档与 CI 收敛，并只以实际执行证据将提案转为 implemented、同时明确所有未验证边界。</textarea>
+<p id="print-prompt" class="print-prompt" style="display:none"></p>
+<noscript><p>复制按钮需要 JavaScript；无需启用脚本也可以选择上方文本，或打开纯文本文件复制。</p></noscript>
+</section>
+
+<footer>
+<p><strong>状态：</strong>proposed · architecture · Rev 2 · 2026-09-09 · 尚未实施。</p>
+<p><strong>事实来源：</strong><a href="TUI-IMPROVEMENT-PLAN.html">原改进计划</a>、<a href="TUI-REBUILD-REPORT.html">Rev 1</a>、<a href="TUI-REBUILD-REVIEW.html">第三方评审</a>、<a href="hkg_flight/tui.py">tui.py</a>、cli.py、poller.py、api.py、alerts.py、utils.py、web.py、README.md、SPEC.md、PROJECT-STATUS.md、pyproject.toml、.github/workflows/ci.yml、test_hkg_flight.py 的静态阅读。</p>
+<p><strong>提案登记：</strong><a href=".agents/notes/proposed/architecture/2026-09-09-tui-rebuild.md">2026-09-09-tui-rebuild.md</a>；当前详细规划与验收契约以 Rev 2 为唯一正文，登记页仅维护生命周期和指向关系。</p>
+<p>本报告不等于产品运行证明；Rev 1、第三方评审与原改进计划均作为提案历史保留。</p>
+</footer>
+</main>
+</div>
+<script>
+(function(){
+  'use strict';
+  var text = document.getElementById('prompt-text');
+  var status = document.getElementById('copy-status');
+  document.getElementById('print-prompt').textContent = text.value;
+  document.getElementById('copy-prompt').addEventListener('click', async function(){
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(text.value);
+      status.textContent = '已复制；请审阅批准后再发送';
+    } catch (error) {
+      text.focus(); text.select(); text.setSelectionRange(0, text.value.length);
+      status.textContent = '已选中全文，请按 Ctrl+C（macOS：Cmd+C）复制';
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -32,5 +32,8 @@ ehthumbs.db
 test_out.txt
 *.log
 
+# Agent scratch space
+.workbuddy-ai/tmp_*/
+
 # Cache
 .hkg_flight_cache/

@@ -6,7 +6,7 @@ This package provides:
 - Flight data polling from HKIA API
 - Local caching with offline fallback
 - Gate/stand change alerts
-- Curses TUI and Web dashboard
+- Terminal workbench (optional Textual UI, stdlib plain fallback) and Web dashboard
 - CLI commands for quick queries
 
 Usage:

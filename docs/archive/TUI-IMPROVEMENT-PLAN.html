@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HKG Flight Data v3 — TUI 改进建议</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #121d30;
+      --panel-2: #17263d;
+      --line: #2b405f;
+      --text: #e7eef8;
+      --muted: #9fb0c8;
+      --accent: #f5b942;
+      --cyan: #62d8e8;
+      --green: #63d297;
+      --yellow: #f6c85f;
+      --red: #ff7f8a;
+      --blue: #8fb8ff;
+      --shadow: 0 18px 45px rgba(0, 0, 0, .22);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 90% 0%, rgba(98,216,232,.12), transparent 30rem),
+        radial-gradient(circle at 0% 20%, rgba(245,185,66,.10), transparent 28rem),
+        var(--bg);
+      font: 15px/1.7 "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 64px; }
+    header {
+      padding: 34px 36px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(135deg, rgba(23,38,61,.96), rgba(18,29,48,.92));
+      box-shadow: var(--shadow);
+    }
+    .eyebrow { color: var(--accent); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
+    h1 { margin: 8px 0 8px; font-size: clamp(28px, 5vw, 48px); line-height: 1.15; }
+    h2 { margin: 38px 0 16px; font-size: 25px; }
+    h3 { margin: 0 0 8px; font-size: 18px; }
+    p { margin: 8px 0 14px; }
+    .lead { color: var(--muted); max-width: 850px; font-size: 17px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .pill { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: rgba(11,18,32,.45); font-size: 13px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    .card, .callout {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(18,29,48,.88);
+      padding: 20px;
+    }
+    .card p, .callout p { color: var(--muted); }
+    .priority { border-top: 3px solid var(--yellow); }
+    .priority.p1 { border-top-color: var(--red); }
+    .priority.p2 { border-top-color: var(--yellow); }
+    .priority.p3 { border-top-color: var(--blue); }
+    .tag { display: inline-block; margin-bottom: 10px; padding: 2px 8px; border-radius: 5px; font-size: 12px; font-weight: 700; }
+    .tag-p1 { color: #ffd9dd; background: rgba(255,127,138,.15); border: 1px solid rgba(255,127,138,.4); }
+    .tag-p2 { color: #ffe9ad; background: rgba(246,200,95,.14); border: 1px solid rgba(246,200,95,.35); }
+    .tag-p3 { color: #cfe0ff; background: rgba(143,184,255,.14); border: 1px solid rgba(143,184,255,.35); }
+    .status { color: var(--green); font-weight: 700; }
+    .warning { color: var(--yellow); font-weight: 700; }
+    .danger { color: var(--red); font-weight: 700; }
+    code { padding: 2px 5px; border-radius: 4px; background: #0a1424; color: #cfe3ff; font-family: Consolas, monospace; }
+    pre {
+      overflow-x: auto;
+      margin: 14px 0 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #091321;
+      color: #d7e7ff;
+      font: 13px/1.55 Consolas, monospace;
+    }
+    table { width: 100%; border-collapse: collapse; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: rgba(18,29,48,.88); }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--cyan); background: rgba(23,38,61,.9); font-size: 13px; }
+    tr:last-child td { border-bottom: 0; }
+    ul, ol { margin: 8px 0 0 20px; padding: 0; }
+    li { margin: 4px 0; }
+    .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
+    .step { padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+    .arrow { color: var(--accent); font-weight: 700; }
+    .mockup { border: 1px solid #3a5277; border-radius: 12px; background: #07101d; box-shadow: var(--shadow); }
+    .mockup-bar { padding: 8px 12px; border-bottom: 1px solid #263b5c; color: var(--muted); font: 12px Consolas, monospace; }
+    .mockup pre { margin: 0; border: 0; border-radius: 0; background: transparent; }
+    .checklist { list-style: none; margin-left: 0; }
+    .checklist li::before { content: "□"; display: inline-block; width: 24px; color: var(--accent); font-size: 18px; vertical-align: -1px; }
+    footer { margin-top: 42px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    @media (max-width: 800px) {
+      .grid, .grid-2 { grid-template-columns: 1fr; }
+      header { padding: 25px 22px; }
+      th, td { padding: 9px 10px; }
+      table { display: block; overflow-x: auto; white-space: normal; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div class="eyebrow">HKG Flight Data v3 · Design Review</div>
+      <h1>TUI 改进建议</h1>
+      <p class="lead">这份文档整理当前 curses TUI 与 simple TUI 的功能、显示、交互和测试问题，并给出分阶段改进方案。目标不是重写 TUI，而是在保持现有功能的前提下，让机场航班看板更清晰、更可靠、更容易操作。</p>
+      <div class="meta">
+        <span class="pill">检查对象：hkg_flight/tui.py</span>
+        <span class="pill">包含：curses TUI + simple TUI</span>
+        <span class="pill">原则：先修功能，再优化显示</span>
+        <span class="pill">状态：建议阶段，尚未实施</span>
+      </div>
+    </header>
+
+    <h2>一、结论摘要</h2>
+    <div class="grid">
+      <section class="card priority p1">
+        <span class="tag tag-p1">P1 · 功能正确性</span>
+        <h3>页面导航应统一</h3>
+        <p>告警和航司页面目前使用阻塞式 <code>getch()</code>，按任意键就返回离港页，体验与主列表不一致。建议改为真正的模式状态，由主循环统一处理按键。</p>
+      </section>
+      <section class="card priority p1">
+        <span class="tag tag-p1">P1 · 数据可见性</span>
+        <h3>后台更新要主动反映</h3>
+        <p>Poller 在后台更新数据后，TUI 不一定立即刷新。建议根据 <code>last_update</code> 变化触发重绘，并在标题栏显示更新时间与数据来源。</p>
+      </section>
+      <section class="card priority p2">
+        <span class="tag tag-p2">P2 · 使用体验</span>
+        <h3>航班行压缩并适配宽度</h3>
+        <p>当前固定字段约需 80 列，包含 REG 后容易挤满窄终端。建议默认隐藏 REG，缩短路线，并按终端宽度保护核心字段。</p>
+      </section>
+    </div>
+
+    <h2>二、当前功能盘点</h2>
+    <table>
+      <thead><tr><th>功能</th><th>当前按键/行为</th><th>现状</th><th>建议</th></tr></thead>
+      <tbody>
+        <tr><td>离港航班</td><td><code>1</code></td><td class="status">可用</td><td>保留，作为默认页面</td></tr>
+        <tr><td>到达航班</td><td><code>2</code></td><td class="status">可用</td><td>保留</td></tr>
+        <tr><td>告警</td><td><code>5</code></td><td class="warning">可用但阻塞</td><td>改为非阻塞模式，支持滚动和 Esc 返回</td></tr>
+        <tr><td>航司列表</td><td><code>6</code></td><td class="warning">只显示当前屏幕</td><td>支持滚动/分页，显示范围</td></tr>
+        <tr><td>筛选</td><td>直接输入字符</td><td class="warning">可用但不明显</td><td>增加搜索状态栏和明确字段匹配</td></tr>
+        <tr><td>翻页</td><td><code>←</code> / <code>→</code></td><td class="status">可用</td><td>增加上下滚动，保留 Home/End</td></tr>
+        <tr><td>Web 开关</td><td><code>W</code></td><td class="status">可用</td><td>在标题栏显示 ON/OFF 和端口</td></tr>
+        <tr><td>退出</td><td><code>Q</code></td><td class="status">可用</td><td>保留，并保证所有模式均可退出</td></tr>
+        <tr><td>自动更新</td><td>Poller 每 30 秒</td><td class="warning">数据更新提示不足</td><td>显示更新时间，变化时刷新</td></tr>
+      </tbody>
+    </table>
+
+    <h2>三、推荐的目标界面</h2>
+    <div class="mockup">
+      <div class="mockup-bar">curses TUI · recommended layout · 80+ columns</div>
+      <pre>┌──────────────────────────────────────────────────────────────┐
+│ HKG Flight Data — 2026-09-08       Updated 20:18:04  ⚠ 2    │
+│ Departures | 408 flights | Polling ON | Page 1/21            │
+├──────────────────────────────────────────────────────────────┤
+│ TIME   FLIGHT    ROUTE          STATUS       GATE/STAND TERM │
+│ 00:05  CX261     HKG→CDG        Dep 00:08    Gate 64    T1   │
+│ 00:05  CX880     HKG→LAX        Dep 00:00    Gate 32    T1   │
+│ 00:10  HX535     HKG→BKK        Delayed      Gate 15    T1   │
+│ ...                                                          │
+├──────────────────────────────────────────────────────────────┤
+│ Filter: CX_                                                   │
+│ [1]Dept [2]Arr [5]Alerts [6]Airlines [/]Search [W]Web [Q]uit│
+└──────────────────────────────────────────────────────────────┘</pre>
+    </div>
+    <p class="muted">核心字段优先级建议为：<strong>航班号 &gt; 状态 &gt; 登机门/停机位 &gt; 路线 &gt; 航司注册号</strong>。REG 可放入详情视图，不应挤占默认看板空间。</p>
+
+    <h2>四、按优先级的改进建议</h2>
+    <div class="grid-2">
+      <section class="card priority p1">
+        <span class="tag tag-p1">P1</span>
+        <h3>统一页面导航</h3>
+        <p><strong>当前问题：</strong><code>cmd_alerts()</code> 和 <code>cmd_airlines()</code> 在渲染后直接调用 <code>getch()</code>，用户按任意键即返回离港页。</p>
+        <p><strong>建议：</strong>仅切换 <code>self.mode</code>，由 <code>run()</code> 和 <code>handle_key()</code> 统一管理。</p>
+        <pre>1  Departures
+2  Arrivals
+5  Alerts
+6  Airlines
+Esc  返回上一模式
+Q  退出（所有模式有效）</pre>
+      </section>
+      <section class="card priority p1">
+        <span class="tag tag-p1">P1</span>
+        <h3>后台数据更新后刷新画面</h3>
+        <p><strong>当前问题：</strong>Poller 在后台更新 <code>today_records</code>，界面缺少明确的自动刷新和数据来源提示。</p>
+        <p><strong>建议：</strong>记录上次已渲染的 <code>poller.last_update</code>；当时间戳变化时刷新列表。</p>
+        <pre>Updated 20:18:04 | Polling ON
+Updated 20:18:04 | Cached data
+No data available</pre>
+      </section>
+      <section class="card priority p2">
+        <span class="tag tag-p2">P2</span>
+        <h3>压缩并适配航班行</h3>
+        <p>当前表格包含 TIME、FLIGHT、REG、ROUTE、STATUS、GATE/STAND、TERM，默认宽度接近 80 列。</p>
+        <ul>
+          <li>默认隐藏 REG；</li>
+          <li>路线显示为 <code>HKG→SIN</code>；</li>
+          <li>状态、路线按终端宽度截断；</li>
+          <li>航班号、状态、登机门优先保留。</li>
+        </ul>
+      </section>
+      <section class="card priority p2">
+        <span class="tag tag-p2">P2</span>
+        <h3>加入清晰的搜索状态</h3>
+        <p>当前所有可打印字符都可能进入过滤器，数字快捷键与筛选输入存在认知冲突；<code>cmd_search()</code> 也没有明确按键绑定。</p>
+        <p>建议使用 <code>/</code> 或 <code>S</code> 进入搜索，底部显示 <code>Search: CX759_</code>，Enter 确认，Esc 清除。</p>
+      </section>
+      <section class="card priority p2">
+        <span class="tag tag-p2">P2</span>
+        <h3>实现上下滚动</h3>
+        <p>文档描述了 ↑/↓ 滚动，但当前实现只处理左右翻页和 Home/End。建议为告警、航司和小终端航班列表增加统一的垂直滚动。</p>
+        <div class="flow"><span class="step">↑ / ↓ 逐行</span><span class="arrow">+</span><span class="step">← / → 翻页</span><span class="arrow">+</span><span class="step">Home / End 首尾</span></div>
+      </section>
+      <section class="card priority p2">
+        <span class="tag tag-p2">P2</span>
+        <h3>显示 Web 状态和更新时间</h3>
+        <p>用户需要知道数据是否正在轮询、是否来自缓存，以及 Web 服务是否已启动。</p>
+        <pre>Departures | 408 flights | Updated 20:18:04 | Polling ON | Web OFF</pre>
+      </section>
+    </div>
+
+    <h2>五、页面专项建议</h2>
+    <div class="grid-2">
+      <section class="card">
+        <h3>告警页面</h3>
+        <ul>
+          <li>最新告警优先；</li>
+          <li>格式压缩为 <code>⚠ CX759 GATE 62→63 Boarding</code>；</li>
+          <li>支持 ↑/↓ 滚动；</li>
+          <li>底部显示 <code>Alerts 1-8/15</code>；</li>
+          <li>Esc 返回前一页面；</li>
+          <li>状态过长时截断，不让单条告警破坏布局。</li>
+        </ul>
+      </section>
+      <section class="card">
+        <h3>航司页面</h3>
+        <ul>
+          <li>当前只显示 <code>airlines[:h - 2]</code>，剩余项目不可见；</li>
+          <li>加入上下滚动或分页；</li>
+          <li>显示 <code>Airlines 21-40/89</code>；</li>
+          <li>后续可支持按 IATA 代码或名称筛选；</li>
+          <li>数据加载失败时显示明确提示，而不是空白页面。</li>
+        </ul>
+      </section>
+      <section class="card">
+        <h3>小终端和窗口变化</h3>
+        <ul>
+          <li>保留当前最小尺寸保护；</li>
+          <li>继续处理 <code>KEY_RESIZE</code>；</li>
+          <li>宽度不足时优先隐藏/压缩 REG 和路线；</li>
+          <li>避免直接按字符数截断宽 Unicode 字符导致错位；</li>
+          <li>表头和数据行使用同一套列宽计算。</li>
+        </ul>
+      </section>
+      <section class="card">
+        <h3>simple TUI</h3>
+        <ul>
+          <li>短期不要求与 curses 完全一致；</li>
+          <li>至少统一 1/2/5/6/N/P/Esc/Q；</li>
+          <li>保持 <code>NO_COLOR</code> 和非 TTY 安全输出；</li>
+          <li>文档明确说明 simple TUI 的能力差异；</li>
+          <li>避免告警和航司页面使用“按任意键返回”这一隐式行为。</li>
+        </ul>
+      </section>
+    </div>
+
+    <h2>六、建议的数据刷新流程</h2>
+    <div class="flow">
+      <div class="step">Poller 拉取数据</div><div class="arrow">→</div>
+      <div class="step">更新 <code>last_update</code></div><div class="arrow">→</div>
+      <div class="step">TUI 检测时间戳</div><div class="arrow">→</div>
+      <div class="step">刷新当前模式</div><div class="arrow">→</div>
+      <div class="step">保留页码/筛选</div>
+    </div>
+    <p>建议不要无条件每秒重绘完整屏幕。输入超时只用于检查退出、窗口变化和后台更新；只有数据时间戳、窗口尺寸或当前输入发生变化时才重绘。</p>
+
+    <h2>七、测试计划</h2>
+    <table>
+      <thead><tr><th>测试类别</th><th>应覆盖的行为</th><th>优先级</th></tr></thead>
+      <tbody>
+        <tr><td>按键分发</td><td>1/2/5/6/W/Q、Esc、Backspace、Home/End、左右方向键</td><td>P1</td></tr>
+        <tr><td>页面导航</td><td>告警/航司页面不再阻塞；Esc 返回；Q 在所有页面退出</td><td>P1</td></tr>
+        <tr><td>数据刷新</td><td>Poller 时间戳变化后刷新；无数据、缓存数据和 API 失败提示</td><td>P1</td></tr>
+        <tr><td>布局</td><td>40、60、80、120 列终端；不抛出 curses 越界异常</td><td>P2</td></tr>
+        <tr><td>筛选</td><td>明确字段匹配、大小写、清除、删除字符、空结果</td><td>P2</td></tr>
+        <tr><td>滚动/分页</td><td>页首、页尾、边界、过滤后页码自动修正</td><td>P2</td></tr>
+        <tr><td>simple TUI</td><td>无 curses 时的快捷键、颜色和页面行为</td><td>P3</td></tr>
+      </tbody>
+    </table>
+
+    <h2>八、推荐实施顺序</h2>
+    <ol class="checklist">
+      <li>统一告警/航司页面的非阻塞导航和 Q/Esc 行为。</li>
+      <li>让 TUI 对 Poller 的新数据进行可见刷新，并显示更新时间/缓存状态。</li>
+      <li>实现上下滚动，修正文档中 ↑/↓ 与实际代码的不一致。</li>
+      <li>压缩航班列表布局，默认隐藏 REG 并增加终端宽度适配。</li>
+      <li>设计明确的搜索模式，解决快捷键与筛选字符冲突。</li>
+      <li>补充 FakeCursesScreen 按键、布局、刷新和模式切换测试。</li>
+      <li>最后再统一 simple TUI 的交互细节。</li>
+    </ol>
+
+    <div class="callout" style="margin-top: 28px; border-color: rgba(245,185,66,.45);">
+      <h3>最终建议</h3>
+      <p>不要一次重写整个 TUI。第一轮优先解决“页面是否能正常返回”和“用户看到的数据是否最新”这两个功能问题；第二轮再优化航班行和终端宽度；第三轮统一搜索、滚动和 simple TUI。每一轮都配套 FakeCursesScreen 回归测试，避免再次出现“文档描述了按键，但代码没有实现”的问题。</p>
+    </div>
+
+    <footer>
+      文档：TUI-IMPROVEMENT-PLAN.html · 基于当前 <code>hkg_flight/tui.py</code>、<code>test_hkg_flight.py</code>、README、COMMANDS 和 SPEC 的只读分析。<br>
+      本文只记录建议，未修改 TUI 源代码，也未提交或推送任何实施变更。
+    </footer>
+  </main>
+</body>
+</html>

@@ -2,9 +2,8 @@
 
 ## 系统要求
 
-- Python 3.7 或更高版本
-- 无需第三方依赖（仅使用标准库）
-- 可选：`windows-curses`（Windows 上需要完整 TUI 支持）
+- Python 3.7 或更高版本（基础包，无第三方依赖）
+- 可选：`.[tui]`（增强终端界面，Python 3.9+，项目目标 3.11/3.13）
 
 ## 快速开始
 
@@ -17,6 +16,9 @@ cd hkg-flight-data-v3
 
 # 验证 Python 版本
 python --version  # 需要 3.7+
+
+# 完整终端工作台（可选，安装 Textual）
+python -m pip install ".[tui]"
 ```
 
 ### 2. 运行
@@ -184,9 +186,10 @@ python -m hkg_flight web 2>&1 | tee hkg_flight.log
 
 ### 常见问题
 
-1. **TUI 无法启动**
-   - Windows：安装 `windows-curses`：`pip install windows-curses`
-   - 或者使用 CLI 命令或 Web 模式
+1. **终端界面无法使用增强后端**
+   - 安装 `.[tui]`：`pip install "hkg-flight-data[tui]"`
+   - 或显式使用 plain：`python -m hkg_flight tui --ui plain`
+   - 或使用 CLI 命令或 Web 模式
 
 2. **API 连接失败**
    - 检查网络连接

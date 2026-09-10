@@ -1,0 +1,52 @@
+/* HKG Flight Data — new TUI theme (Textual) */
+
+Screen {
+    background: #122937;
+    color: #e2edf1;
+}
+
+#header {
+    background: #0d1f2b;
+    color: #e2edf1;
+    height: 1;
+    padding: 0 1;
+}
+
+#nav {
+    color: #8ec9df;
+    height: 1;
+    padding: 0 1;
+}
+
+#search_row {
+    height: 1;
+    padding: 0 1;
+}
+
+#search_label {
+    color: #bad2df;
+}
+
+#search_input {
+    border: none;
+    background: #1a3547;
+    color: #e2edf1;
+    width: 1fr;
+}
+
+#search_input:focus {
+    border: solid #edb64a;
+    background: #1d3b4f;
+}
+
+#body {
+    height: 1fr;
+    padding: 0 1;
+}
+
+#footer {
+    height: 1;
+    color: #8ec9df;
+    background: #0d1f2b;
+    padding: 0 1;
+}

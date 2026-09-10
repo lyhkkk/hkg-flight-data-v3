@@ -4,6 +4,7 @@ Handles communication with the HKIA flight API.
 """
 
 import json
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -28,14 +29,21 @@ class APIClient(object):
         self._last_call = 0.0
         self._airlines_cache = None
         self._airlines_cache_time = 0.0
+        self._rate_lock = threading.Lock()
 
     def _rate_limit(self):
-        """Enforce minimum interval between API calls."""
-        now = time.time()
-        wait = self.min_interval - (now - self._last_call)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_call = time.time()
+        """Enforce minimum interval between API calls.
+
+        The timing decision itself is serialized so concurrent callers
+        (flights poller, airline loader, web queries) cannot all observe the
+        same free slot and bypass the polite interval.
+        """
+        with self._rate_lock:
+            now = time.time()
+            wait = self.min_interval - (now - self._last_call)
+            if wait > 0:
+                time.sleep(wait)
+            self._last_call = time.time()
 
     def _request_json(self, url):
         """Make HTTP GET request and return parsed JSON."""
@@ -104,6 +112,43 @@ class APIClient(object):
         if self.cache is not None and not self.bypass_cache:
             return self.cache.read_airlines()
         return []
+
+    def fetch_airlines_meta(self):
+        """
+        Fetch airline metadata with failure/result metadata.
+
+        Unlike ``fetch_airlines`` (which returns ``[]`` for both failure and
+        an empty result), this reports the outcome so the UI can distinguish
+        "loaded empty" from "failed to load".
+
+        Returns:
+            dict with keys ``airlines`` (list), ``source``
+            (``"api"|"cache"|"none"``), ``ok`` (bool) and ``error`` (str or None).
+        """
+        # Fresh cache hit (respects --force).
+        if self.cache is not None and not self.bypass_cache:
+            cached = self.cache.read_airlines()
+            if cached:
+                cache_age = self.cache.cache_age_minutes(self.cache.airlines_path)
+                if cache_age >= 0 and cache_age < (self.airlines_cache_hours * 60):
+                    return {"airlines": cached, "source": "cache", "ok": True, "error": None}
+
+        self._rate_limit()
+        url = "{}/airlines".format(API_BASE)
+        data = self._request_json(url)
+        if data is not None:
+            if not isinstance(data, list):
+                data = []
+            if self.cache is not None:
+                self.cache.write_airlines(data)
+            return {"airlines": data, "source": "api", "ok": True, "error": None}
+
+        # API failed: fall back to cache unless this run bypasses it.
+        if self.cache is not None and not self.bypass_cache:
+            fallback = self.cache.read_airlines()
+            if fallback:
+                return {"airlines": fallback, "source": "cache", "ok": True, "error": "api_failed"}
+        return {"airlines": [], "source": "none", "ok": False, "error": "api_failed"}
 
     def fetch_fvm_registrations(self):
         """

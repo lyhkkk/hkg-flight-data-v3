@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HKG Flight Data v3 — 复审报告 v6（3a110a3）</title>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c232c; --border:rgba(255,255,255,.09);
+  --text:#e6edf3; --muted:#8b98a9; --accent:#faa718;
+  --ok:#4ade80; --warn:#f59e0b; --bad:#ef4444; --info:#58a6ff;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.7;padding:32px 20px 80px}
+.wrap{max-width:1080px;margin:0 auto}
+header{border-bottom:1px solid var(--border);padding-bottom:24px;margin-bottom:26px}
+h1{font-size:1.85rem;letter-spacing:-.02em} h1 span{color:var(--accent)}
+.sub{color:var(--muted);font-size:.87rem;margin-top:8px;font-family:var(--mono)}
+h2{font-size:1.2rem;margin:36px 0 13px;padding-left:12px;border-left:3px solid var(--accent)}
+h2.ok{border-left-color:var(--ok)} h2.new{border-left-color:var(--warn)}
+p{margin:10px 0;color:#c9d4e0}
+.verdict{background:linear-gradient(90deg,rgba(74,222,128,.1),transparent);border:1px solid rgba(74,222,128,.25);border-radius:10px;padding:16px 20px;margin:18px 0}
+.delta{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:11px;margin:20px 0}
+.d{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:13px 15px}
+.d .t{font-size:.76rem;color:var(--muted);letter-spacing:.05em}
+.d .n{font-size:1.38rem;font-weight:700;font-family:var(--mono);margin-top:4px}
+.up{color:var(--ok)} .mid{color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:.87rem;margin:13px 0}
+th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--accent);font-weight:600;background:var(--panel2)}
+code{font-family:var(--mono);font-size:.82rem;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px}
+.f{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:15px 18px;margin:12px 0}
+.f.new{border-left:3px solid var(--warn)}
+.f h4{font-size:.98rem;display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:6px}
+.badge{font-size:.68rem;font-family:var(--mono);padding:2px 7px;border-radius:4px;font-weight:700}
+.b-p3{background:rgba(88,166,255,.13);color:#8fc4ff;border:1px solid rgba(88,166,255,.3)}
+.b-ok{background:rgba(74,222,128,.14);color:#7ee8a5;border:1px solid rgba(74,222,128,.3)}
+.loc{font-family:var(--mono);font-size:.77rem;color:var(--muted);margin-bottom:7px}
+.f p{font-size:.91rem;margin:6px 0}
+pre{background:#0a0e13;border:1px solid var(--border);border-radius:8px;padding:11px 14px;overflow-x:auto;font-family:var(--mono);font-size:.79rem;line-height:1.6;margin:9px 0;color:#c9d4e0}
+pre .c{color:#6b7a8f} pre .r{color:#ff9090} pre .g{color:#7ee8a5}
+.ev{background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.18);border-radius:7px;padding:9px 13px;font-size:.85rem;margin-top:9px;font-family:var(--mono);color:#a8dcc0}
+.fixbox{background:rgba(88,166,255,.07);border:1px solid rgba(88,166,255,.2);border-radius:7px;padding:9px 13px;font-size:.87rem;margin-top:9px}
+.fixbox b{color:var(--info)}
+.box{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:15px 19px;margin:14px 0}
+ul{margin:8px 0 8px 20px} li{margin:5px 0;color:#c9d4e0;font-size:.91rem}
+table.check td:first-child{width:28px;text-align:center;font-weight:700}
+td.y{color:var(--ok)} td.h{color:var(--warn)}
+.note{background:rgba(250,167,24,.08);border:1px solid rgba(250,167,24,.22);border-radius:8px;padding:11px 15px;font-size:.88rem;margin:12px 0}
+footer{margin-top:46px;padding-top:16px;border-top:1px solid var(--border);color:var(--muted);font-size:.81rem;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>HKG Flight Data v3 — <span>复审报告 v6</span></h1>
+  <div class="sub">基线 03fa20c → 3a110a3（3 个提交）· 2026-09-08 · 只读审查，未改动任何项目文件</div>
+</header>
+
+<div class="verdict">
+  <p><strong>结论：v5 提出的 8 项改进已全部完成（含 2 项 P1），项目达到可收尾状态。</strong></p>
+  <p style="margin-bottom:0">两项 P1 均已闭环并实测：机位误判收紧后 <code>CX75/BA15/KA21/HX22/SQ2</code> 全部恢复为航班号搜索；测试套件在 Windows 下从「82 收集 / 2 errors」变为 <strong>88 通过（skipped=2）全绿</strong>。另外还顺手补齐了 v5 清单里的 3 项 P3（<code>NO_COLOR</code>、<code>status_pair</code> 死代码接线、<code>Poller.stop</code> 可观测）。仅剩 2 项 P3 级残留，不影响使用。</p>
+</div>
+
+<div class="delta">
+  <div class="d"><div class="t">安全 SECURITY</div><div class="n"><span style="color:var(--muted)">A-</span> → <span class="up">A-</span></div></div>
+  <div class="d"><div class="t">实用 UTILITY</div><div class="n"><span style="color:var(--muted)">B+</span> → <span class="up">A-</span></div></div>
+  <div class="d"><div class="t">简洁 SIMPLICITY</div><div class="n"><span style="color:var(--muted)">B+</span> → <span class="up">A-</span></div></div>
+  <div class="d"><div class="t">美观 AESTHETICS</div><div class="n"><span style="color:var(--muted)">A-</span> → <span class="up">A</span></div></div>
+  <div class="d"><div class="t">可维护性</div><div class="n"><span style="color:var(--muted)">A-</span> → <span class="up">A</span></div></div>
+  <div class="d"><div class="t">测试</div><div class="n up">88 <small style="font-size:.7rem">+2 skip</small></div></div>
+</div>
+
+<h2 class="ok">一、v5 改进项验收（8 项全部完成）</h2>
+<table class="check">
+<tr><th></th><th style="width:20%">v5 问题</th><th>修复方式</th><th style="width:22%">实测结果</th></tr>
+<tr><td class="y">✓</td><td><strong>V1（P1）机位误判</strong></td><td><code>_is_stand</code> 正则收紧为 <code>[WNRSEDX]\d{1,3}</code>（单字母前缀 + 1~3 位数字），并加空值保护</td><td class="y">CX75/BA15/KA21/HX22/SQ2 均回到「航班号」</td></tr>
+<tr><td class="y">✓</td><td><strong>V2（P1）Windows 测试报红</strong></td><td><code>_CURSES_AVAILABLE = importlib.util.find_spec("_curses") is not None</code> + <code>@unittest.skipUnless</code></td><td class="y">88 run / OK (skipped=2)</td></tr>
+<tr><td class="y">✓</td><td>V3 <code>--force</code> 语义夸大</td><td>帮助文本改 "Bypass cached airline data for this run"，运行输出同步改为 "bypassing cached airline data"</td><td class="y">与实际行为一致</td></tr>
+<tr><td class="y">✓</td><td>V4 文档测试数过时</td><td>PROJECT-STATUS 改为「88 个测试通过；测试数量与结果仍以本地命令和 CI 为准」</td><td class="y">与实测 88 一致</td></tr>
+<tr><td class="y">✓</td><td>P3 缺 <code>--no-color</code></td><td>新增 <code>_colors_enabled()</code>：尊重 <code>NO_COLOR</code> 环境变量 + <code>isatty()</code> 检测，<code>_colored()</code> 全量接入</td><td class="y"><code>NO_COLOR=1</code> → <code>_colored('X','31')</code> 返回 <code>'X'</code></td></tr>
+<tr><td class="y">✓</td><td>P3 <code>status_pair</code> 死代码</td><td>接线进 curses 渲染（<code>tui.py:422</code>），并把映射对齐 <code>_setup_curses_colors</code> 的 1-5 号色对</td><td class="y">0 调用 → 实际生效</td></tr>
+<tr><td class="y">✓</td><td>P3 <code>Poller.stop</code> 静默假成功</td><td>join 后检测 <code>is_alive()</code>，未停止则记日志并返回 <code>False</code></td><td class="y">失败不再静默</td></tr>
+<tr><td class="y">✓</td><td>测试覆盖补充</td><td>新增 6 个测试（Web / Poller / TUI / <code>--force</code> 回归）</td><td class="y">82 → 88</td></tr>
+</table>
+
+<div class="ev">
+$ python -m unittest test_hkg_flight   →  Ran 88 tests in 1.924s   OK (skipped=2)<br>
+$ _is_stand 判定矩阵：CX75 / BA15 / KA21 / HX22 / SQ2 → 航班号 ｜ W63 / R13 / N30 → 停机位 ｜ G28 → 登机门 ｜ CX → 航司<br>
+$ NO_COLOR=1 → _colors_enabled()=False，_colored('X','31')='X'<br>
+$ compile() 全量 → SyntaxWarning 0 处 ｜ AST 扫描未使用导入 → 0 处
+</div>
+
+<div class="note">
+<strong>更正我上一轮的一处判断：</strong>v5 里我写「<code>Poller.stop()</code> 的 <code>join(5)</code> 必然超时」——这个说法过重了。<code>threading.Event.wait()</code> 在被 set 后是<strong>立即返回</strong>的，所以停止延迟只取决于此刻是否正在进行一次网络请求（最长 15s 超时），多数情况下线程会很快退出。本轮改成「检测 + 记日志 + 返回 False」已经足够，不需要再动。
+</div>
+
+<h2 class="new">二、残留问题（2 项，均为 P3）</h2>
+
+<div class="f new">
+  <h4>R1. 「单字母 + 数字」的输入仍被判为停机位 <span class="badge b-p3">P3</span></h4>
+  <div class="loc">cli.py:30 <code>_is_stand()</code> · cli.py:44 <code>_is_airline_code()</code></div>
+  <p>收紧后的正则 <code>[WNRSEDX]\d{1,3}</code> 解决了「2 字母 + 数字」这一大类，但<strong>单字母 + 1 位数字</strong>仍会命中。而 IATA 航司代码恰好存在这种形态——<strong>D7 = AirAsia X（在 HKIA 有实际运营）</strong>：</p>
+<pre>输入    判定
+D7      停机位   <span class="r">← AirAsia X 的航司代码</span>
+X7/E3   停机位   <span class="r">← 同类形态</span>
+CX75    航班号   <span class="g">← 已修复</span>
+D7233   航班号   <span class="g">← 正常</span></pre>
+  <p>端到端：<code>query D7</code> → 0 条（被拿去比对 stand 字段）；<code>query D7233</code> → 1 条，正常。<br>
+  根因是 <code>_is_airline_code</code> 只认 <code>[A-Z]{2}</code>，不认「字母+数字」形态的航司代码，于是这类输入既落不到航司、又被机位截胡。</p>
+  <div class="fixbox"><b>建议（推荐第 ② 条，一次性解决所有歧义）：</b>① 把 <code>_is_airline_code</code> 放宽为 <code>[A-Z]\d|[A-Z]{2}</code>，让 D7 走航司分支；② <strong>更稳妥</strong>——加「0 结果回退」：当机位/登机门搜索命中 0 条时，自动按航班号再搜一次并打印提示（如「未找到机位 D7，已按航班号搜索」）。这样无论未来出现什么新的歧义形态都不会静默返回空。</div>
+</div>
+
+<div class="f new">
+  <h4>R2. <code>read_state</code> / <code>write_state</code> 仍是零调用死代码 <span class="badge b-p3">P3</span></h4>
+  <div class="loc">cache.py:143-151（本轮未改动）</div>
+  <p><code>state.json</code> 相关的一对方法全项目仅剩定义处 2 处引用，没有任何调用点，文档却仍把它列为缓存文件之一。建议连同 <code>state_path</code> 一并删除，或真正用起来做航班状态快照。</p>
+</div>
+
+<h2>三、累计进展回顾（v2 → v6）</h2>
+<table>
+<tr><th style="width:15%">轮次</th><th style="width:15%">提交</th><th>主要成果</th></tr>
+<tr><td>v2 复审</td><td>dd8edaa→8beb22f</td><td>删除重复单文件、修 XSS / 路径穿越 / 两处崩溃、CLI 迁移 argparse、绑定本地化 —— 阻断级清零</td></tr>
+<tr><td>v5 复审</td><td>8beb22f→03fa20c</td><td>curses 渲染与过滤修复、SSE 清理、告警上限、死代码与导入清零、新增 pyproject + CI；新增机位/登机门/航司搜索与分页</td></tr>
+<tr><td><strong>v6 复审</strong></td><td>03fa20c→3a110a3</td><td>修完 v5 全部 8 项（含 2 项 P1），补 <code>NO_COLOR</code>、状态色统一、停止可观测，测试 82→88 全绿</td></tr>
+</table>
+
+<div class="box">
+  <p style="margin:0"><strong>整体评价：</strong>三轮迭代下来，项目从「安全 D / 可维护性 D」走到了整体 A-。不只是问题数量在下降，更重要的是每一轮都在收敛结构性隐患——双实现分叉、参数解析、渲染分发、缓存删除、测试可信度——而不是堆补丁。剩下 2 项 P3 都是边角：<code>D7</code> 这类输入属于低频场景，<code>state.json</code> 是历史遗留。建议做掉 R1 的「0 结果回退」后就正式收尾，把精力放到功能本身。</p>
+</div>
+
+<footer>
+审查于 2026-09-08 18:4x · 目标提交 3a110a3 · Python 3.13.12 / Windows · 只读审查，未改动任何项目文件<br>
+验证方式：unittest 全量（88 / skipped=2 / OK）· _is_stand 判定矩阵穷举 · NO_COLOR 行为验证 · compile 语法检查 · AST 未用导入扫描 · git diff 逐文件比对
+</footer>
+
+</div>
+</body>
+</html>

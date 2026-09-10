@@ -18,9 +18,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Compile sources
-        run: python -m compileall -q hkg_flight cleanup_alerts.py
+        run: python -m compileall -q hkg_flight tests cleanup_alerts.py
       - name: Run tests
-        run: python -m unittest test_hkg_flight
+        run: python -m unittest discover -s . -p "test*.py"
 
   lint:
     runs-on: ubuntu-latest
@@ -34,3 +34,23 @@ jobs:
         run: python -m pip install ruff
       - name: Lint Python sources
         run: ruff check .
+
+  enhanced-tui:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package with enhanced UI extra
+        run: python -m pip install ".[tui]"
+      - name: Verify Textual is installed
+        run: python -c "import textual; print(textual.__version__)"
+      - name: Run enhanced UI interaction tests
+        run: python -m unittest tests.test_terminal_textual tests.test_terminal_state tests.test_terminal_views

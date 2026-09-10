@@ -37,9 +37,13 @@ python -m hkg_flight clear-cache --yes  # 跳过确认
 ### 交互式模式
 
 ```bash
-# TUI 模式（默认）
+# 终端工作台（默认，auto 后端：优先增强界面，否则 plain）
 python -m hkg_flight
 python -m hkg_flight tui
+
+# 明确指定后端
+python -m hkg_flight tui --ui textual   # 要求增强界面（缺失则非零退出）
+python -m hkg_flight tui --ui plain     # 标准库行命令降级
 
 # TUI 模式（禁用后台轮询）
 python -m hkg_flight tui --no-poll
@@ -80,6 +84,7 @@ python -m hkg_flight web -p 9000
 |------|------|
 | `--port`, `-p` | Web 服务器端口（默认：8080） |
 | `--no-poll` | 禁用后台轮询（仅 tui） |
+| `--ui` | 终端后端：`auto`（默认）、`textual`、`plain`（仅 tui） |
 
 **clear-cache:**
 | 选项 | 说明 |
@@ -188,35 +193,28 @@ options:
 
 ## TUI 界面操作
 
-启动后会看到：
-
-```
-================================================================================
-  HKG Flight Data - 2026-09-07
-================================================================================
-
-  Departures — 408 flights | Page 1/21
-
-  TIME   FLIGHT     REG    ROUTE                STATUS             GATE/STAND   TERM
-  ---------------------------------------------------------------------------
-  00:05  CX261      -      HKG → CDG            Dep 00:08          Gate 64      T1
-  00:05  CX880      -      HKG → LAX            Dep 00:00          Gate 32      T1
-  ...
-
-  [N]ext [P]revious [1]Departures [2]Arrivals [5]Alerts [6]Airlines [Q]uit
-```
+启动后为四页工作台（离港 / 到达 / 告警 / 航司）+ 详情 + 帮助。
 
 **常用按键**：
 
 | 按键 | 功能 |
 |------|------|
-| `1` | 查看离境航班 |
-| `2` | 查看到达航班 |
-| `5` | 查看告警 |
-| `6` | 查看航空公司 |
-| `N` | 下一页 |
-| `P` | 上一页 |
-| `Q` | 退出 |
+| `1` / `2` / `5` / `6` | 离港 / 到达 / 告警 / 航司 |
+| `/` | 进入当前页搜索 |
+| `Enter` | 打开详情；航司页应用筛选并返回航班页 |
+| `Esc` | 关面板 → 清筛选 → 辅助页返回最近航班页 |
+| `↑` `↓` `PgUp` `PgDn` `Home` `End` | 移动选择与滚动 |
+| `Tab` / `Shift+Tab` | 焦点轮转 |
+| `f` / `r` / `w` / `?` / `q` | 筛选 / 刷新 / Web 开关 / 帮助 / 退出 |
+| `Ctrl+Q` / `Ctrl+C` | 全局退出（输入态用 `Ctrl+Q`） |
+
+搜索框获得焦点时，数字、`W`、`Q` 等均为普通文本，不切页、不开关 Web、不退出。
+
+## Plain 降级
+
+无增强界面或非交互输出时，plain 后端按“一行一个命令”工作：
+`1/2/5/6`、`n`/`p`、`/ 搜索词`、`detail 序号`、`r`、`w`、`help`、`q`。
+非 TTY 仅输出默认页的有限快照后退出；失败无数据时返回非零状态。
 
 ---
 
@@ -264,9 +262,9 @@ options:
 
 ## 系统要求
 
-- **Python**: 3.7 或更高版本
-- **依赖**: 无（仅使用 Python 标准库）
-- **Windows TUI**: 建议安装 `windows-curses`（可选）
+- **Python**: 3.7 或更高版本（基础包）
+- **依赖**: 基础包无第三方依赖
+- **增强终端界面**: Python 3.9+（项目目标 3.11 / 3.13）+ `.[tui]`
   ```bash
-  pip install windows-curses
+  pip install "hkg-flight-data[tui]"
   ```

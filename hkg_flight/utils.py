@@ -131,7 +131,7 @@ def get_status_info(raw_status, flight_type=None):
 
 
 def status_pair(category):
-    """Return curses color pair id and icon for status category."""
+    """Return a stable status-category identifier (used by legacy callers)."""
     # Returns a simple identifier for color mapping
     status_map = {
         "scheduled": 5,

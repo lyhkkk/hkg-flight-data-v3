@@ -23,8 +23,14 @@ classifiers = [
 [project.scripts]
 hkg-flight = "hkg_flight.cli:main"
 
+[project.optional-dependencies]
+tui = ["textual>=8,<9; python_version >= '3.9'"]
+
 [tool.setuptools.packages.find]
 include = ["hkg_flight*"]
+
+[tool.setuptools.package-data]
+"hkg_flight.terminal" = ["*.tcss"]
 
 [tool.ruff]
 line-length = 100

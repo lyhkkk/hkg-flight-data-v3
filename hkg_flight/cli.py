@@ -536,23 +536,58 @@ def cmd_web(args, poller, api, alert_manager):
     return 0
 
 
-def cmd_tui(args, poller, api, alert_manager, web_server):
-    """Handle 'tui' command - start TUI interface."""
-    try:
-        from .tui import start_tui, run_simple_tui
-    except ImportError:
-        print("TUI module not available.")
+def _run_terminal_ui(args, cache, api, alert_manager, port, no_poll, ui="auto"):
+    """Run the rebuilt terminal workbench through one Session lifecycle.
+
+    The session is the single owner of the poller, the web server and the
+    airline loader; every exit path goes through ``finally`` so terminal
+    state and owned resources are always released.
+    """
+    import importlib.util
+
+    from .terminal.session import Session
+
+    ui = ui or "auto"
+    textual_available = importlib.util.find_spec("textual") is not None
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+
+    if ui == "textual" and (not textual_available or not interactive):
+        reason = "Textual is not installed" if not textual_available else "not an interactive terminal"
+        print("Error: --ui textual requires the enhanced UI, but {}.".format(reason),
+              file=sys.stderr)
+        print("Install with: pip install 'hkg-flight-data[tui]'", file=sys.stderr)
         return 1
 
-    # Try curses TUI first, fall back to simple TUI.
-    # start_tui imports curses at call time, so ImportError remains the probe.
-    try:
-        start_tui(poller, api, alert_manager, web_server)
-    except ImportError:
-        print("curses not available, using simple TUI")
-        run_simple_tui(poller, api, alert_manager, web_server)
+    if ui == "auto":
+        if textual_available and interactive:
+            backend = "textual"
+        else:
+            backend = "plain"
+            if not textual_available:
+                print("Textual not installed; using plain mode. "
+                      "Install 'hkg-flight-data[tui]' for the full workbench.", file=sys.stderr)
+            elif not interactive:
+                print("Not an interactive terminal; using plain mode.", file=sys.stderr)
+    else:
+        backend = ui
 
-    return 0
+    session = Session(
+        cache=cache,
+        api=api,
+        alert_manager=alert_manager,
+        port=port,
+        no_poll=no_poll,
+    )
+    try:
+        session.start()
+        if backend == "textual":
+            from .terminal.textual_app import run_textual
+            run_textual(session)
+            return 0
+        from .terminal.plain import run_plain
+        return run_plain(session, tty=interactive)
+    finally:
+        session.close()
 
 
 def create_parser():
@@ -612,6 +647,12 @@ def create_parser():
     tui_parser = subparsers.add_parser("tui", help="Start TUI interface")
     tui_parser.add_argument("--no-poll", action="store_true", help="Disable live polling")
     tui_parser.add_argument("--port", "-p", type=int, default=DEFAULT_WEB_PORT, help="Web server port for W key (default: 8080)")
+    tui_parser.add_argument(
+        "--ui",
+        choices=["auto", "textual", "plain"],
+        default="auto",
+        help="Terminal backend: auto (detect), textual (require enhanced UI), plain (stdlib fallback)",
+    )
     
     return parser
 
@@ -653,43 +694,20 @@ def main(argv=None):
             poller = None
         return cmd_web(args, poller, api, alert_manager)
     elif args.command == "tui":
-        # Import poller for TUI mode
-        try:
-            from .poller import Poller
-            poller = Poller(cache=cache, api=api, alert_manager=alert_manager)
-            poller.enabled = not args.no_poll
-            poller.start()
-            # Wait a moment for data to load
-            time.sleep(0.5)
-        except ImportError:
-            poller = None
-        
-        web_server = None
-        try:
-            from .web import WebServer
-            web_server = WebServer(poller, api, alert_manager, port=args.port)
-        except ImportError:
-            pass
-        
-        return cmd_tui(args, poller, api, alert_manager, web_server)
+        return _run_terminal_ui(
+            args, cache, api, alert_manager,
+            port=getattr(args, "port", DEFAULT_WEB_PORT),
+            no_poll=getattr(args, "no_poll", False),
+            ui=getattr(args, "ui", "auto"),
+        )
     else:
-        # Default: start TUI
-        try:
-            from .poller import Poller
-            poller = Poller(cache=cache, api=api, alert_manager=alert_manager)
-            poller.start()
-            time.sleep(0.5)
-        except ImportError:
-            poller = None
-        
-        web_server = None
-        try:
-            from .web import WebServer
-            web_server = WebServer(poller, api, alert_manager, port=DEFAULT_WEB_PORT)
-        except ImportError:
-            pass
-        
-        return cmd_tui(args, poller, api, alert_manager, web_server)
+        # Default: start TUI with auto backend (no --port/--no-poll on bare entry)
+        return _run_terminal_ui(
+            args, cache, api, alert_manager,
+            port=DEFAULT_WEB_PORT,
+            no_poll=False,
+            ui="auto",
+        )
 
 
 if __name__ == "__main__":
