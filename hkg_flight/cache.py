@@ -1,88 +1,60 @@
 """
-HKG Flight Data v3 - Cache System Module
-Manages on-disk caching of flight data.
+HKG Flight Data v3 - Cache System.
+
+On-disk cache under ``~/.hkg_flight_cache``:
+
+  flights_YYYY-MM-DD.json  raw HKIA API response per date
+  airlines.json            airline metadata
+  alerts.json              active alerts + retained history
+
+Writes are atomic (temp file + ``os.replace``). Reads never raise: a missing or
+corrupt file is simply a cache miss.
 """
 
 import json
 import os
 import threading
 import time
-from datetime import datetime
 
-from .utils import normalize_flight_number, log, validate_date
+from .utils import log, validate_date
 
 
-# Default cache directory
 DEFAULT_CACHE_DIR = "~/.hkg_flight_cache"
 
-# Default API rate limit interval (seconds)
+# Minimum seconds between HKIA API calls (the reference client uses 0.5).
 DEFAULT_MIN_API_INTERVAL = 0.6
 
-# Default web server port
 DEFAULT_WEB_PORT = 8080
 
 
-def _safe_cache_path(cache_dir, filename):
-    """
-    Safely construct a cache file path, ensuring it stays within cache_dir.
-    Returns the absolute path, or None if path traversal is detected.
-    """
-    # Get absolute path of cache directory
-    abs_cache_dir = os.path.abspath(cache_dir)
-    
-    # Construct the full path
-    full_path = os.path.join(cache_dir, filename)
-    abs_full_path = os.path.abspath(full_path)
-    
-    # Verify the path is within the cache directory
-    if not abs_full_path.startswith(abs_cache_dir + os.sep) and abs_full_path != abs_cache_dir:
-        log("Path traversal detected: {}".format(filename))
-        return None
-    
-    return abs_full_path
-
-
-class CacheSystem(object):
-    """
-    Manages the on-disk cache in ``~/.hkg_flight_cache``.
-
-    Files:
-      flights_YYYY-MM-DD.json  - raw HKIA API per date
-      airlines.json            - airline metadata
-      state.json               - current state of all tracked flights
-      alerts.json              - pending alerts (active + history)
-    """
+class CacheSystem:
+    """On-disk cache for flight data, airline metadata and alerts."""
 
     def __init__(self, cache_dir=DEFAULT_CACHE_DIR):
         self.cache_dir = os.path.expanduser(cache_dir)
         self.lock = threading.Lock()
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    # -- paths ------------------------------------------------------------
+    # -- paths -----------------------------------------------------------
     def flight_path(self, date_str):
-        """Get cache path for a specific date. Returns None if date is invalid."""
+        """Cache path for one date, or None when the date is malformed.
+
+        ``date_str`` is always validated to ``\\d{4}-\\d{2}-\\d{2}`` before it
+        reaches the filesystem, so the filename cannot escape the cache dir.
+        """
         if not validate_date(date_str):
-            log("Invalid date format: {}".format(date_str))
             return None
-        return _safe_cache_path(self.cache_dir, "flights_{}.json".format(date_str))
+        return os.path.join(self.cache_dir, f"flights_{date_str}.json")
 
     @property
     def airlines_path(self):
         return os.path.join(self.cache_dir, "airlines.json")
 
     @property
-    def state_path(self):
-        return os.path.join(self.cache_dir, "state.json")
-
-    @property
     def alerts_path(self):
         return os.path.join(self.cache_dir, "alerts.json")
 
-    @property
-    def fvm_reg_path(self):
-        return os.path.join(self.cache_dir, "fvm_registrations.json")
-
-    # -- generic io -------------------------------------------------------
+    # -- generic io ------------------------------------------------------
     def _read_json(self, path, default=None):
         try:
             with open(path, "r", encoding="utf-8") as fh:
@@ -97,33 +69,16 @@ class CacheSystem(object):
                 json.dump(obj, fh, ensure_ascii=False, indent=2)
             os.replace(tmp, path)
         except Exception as exc:
-            log("cache write failed {}: {}".format(path, exc))
+            log(f"cache write failed {path}: {exc}")
 
     def cache_age_minutes(self, path):
+        """Age of a cache file in whole minutes, or -1 when unavailable."""
         try:
-            age = time.time() - os.path.getmtime(path)
-            if age < 0:
-                age = 0
-            return int(age // 60)
+            return int(max(0.0, time.time() - os.path.getmtime(path)) // 60)
         except Exception:
             return -1
 
-    def flight_mtime(self, date_str):
-        """Return the cached flights file mtime as epoch seconds, or None.
-
-        ``cache_saved_at`` reads this value: it records when the local cache
-        file was written, not when HKIA generated the data. When the file or
-        stat is unavailable the caller must surface UNKNOWN, not a fake time.
-        """
-        path = self.flight_path(date_str)
-        if path is None:
-            return None
-        try:
-            return os.path.getmtime(path)
-        except Exception:
-            return None
-
-    # -- flights ----------------------------------------------------------
+    # -- flights ---------------------------------------------------------
     def read_flights(self, date_str):
         path = self.flight_path(date_str)
         if path is None:
@@ -138,7 +93,33 @@ class CacheSystem(object):
         with self.lock:
             self._write_json(path, data)
 
-    # -- airlines ---------------------------------------------------------
+    def clear_flights(self, date_str):
+        """Delete the cached file for one date (a no-op when absent)."""
+        path = self.flight_path(date_str)
+        if path is None:
+            return
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            log(f"cache delete failed {path}: {exc}")
+
+    def flight_mtime(self, date_str):
+        """Cached flights file mtime as epoch seconds, or None.
+
+        This is when the *local* file was written, not when HKIA generated the
+        data; callers must surface UNKNOWN rather than a fake time when absent.
+        """
+        path = self.flight_path(date_str)
+        if path is None:
+            return None
+        try:
+            return os.path.getmtime(path)
+        except Exception:
+            return None
+
+    # -- airlines --------------------------------------------------------
     def read_airlines(self):
         data = self._read_json(self.airlines_path, [])
         return data if isinstance(data, list) else []
@@ -147,18 +128,7 @@ class CacheSystem(object):
         with self.lock:
             self._write_json(self.airlines_path, data)
 
-    # -- state ------------------------------------------------------------
-    def read_state(self):
-        data = self._read_json(self.state_path, {})
-        if isinstance(data, dict) and isinstance(data.get("flights"), dict):
-            return data["flights"]
-        return data if isinstance(data, dict) else {}
-
-    def write_state(self, state):
-        with self.lock:
-            self._write_json(self.state_path, state if isinstance(state, dict) else {})
-
-    # -- alerts -----------------------------------------------------------
+    # -- alerts ----------------------------------------------------------
     def read_alerts(self):
         data = self._read_json(self.alerts_path, {})
         if not isinstance(data, dict):
@@ -172,54 +142,7 @@ class CacheSystem(object):
 
     def write_alerts(self, alert_data):
         with self.lock:
-            payload = {
+            self._write_json(self.alerts_path, {
                 "active": alert_data.get("active", []),
                 "history": alert_data.get("history", []),
-            }
-            self._write_json(self.alerts_path, payload)
-
-    # -- FVM registrations (accumulated over time) -------------------------
-    def read_fvm_registrations(self):
-        """Read accumulated FVM registration data (flight_id -> reg info)."""
-        data = self._read_json(self.fvm_reg_path, {})
-        return data if isinstance(data, dict) else {}
-
-    def write_fvm_registrations(self, data):
-        """Write accumulated FVM registration data."""
-        with self.lock:
-            self._write_json(self.fvm_reg_path, data if isinstance(data, dict) else {})
-
-    def merge_fvm_snapshot(self, fvm_list):
-        """
-        Merge a FVM API snapshot into the accumulated cache.
-        FVM returns current active flights; we accumulate over time so we
-        keep registration data for flights that have already departed.
-        """
-        if not isinstance(fvm_list, list):
-            return
-        with self.lock:
-            accumulated = self._read_json(self.fvm_reg_path, {})
-            if not isinstance(accumulated, dict):
-                accumulated = {}
-            for item in fvm_list:
-                fid = item.get("flight_id", "")
-                if not fid:
-                    continue
-                key = normalize_flight_number(fid)
-                existing = accumulated.get(key, {})
-                # Update with latest data, keep old fields if new ones are empty
-                merged = {
-                    "REG": item.get("REG") or existing.get("REG", ""),
-                    "SUBTYPE": item.get("SUBTYPE") or existing.get("SUBTYPE", ""),
-                    "ORIG": item.get("ORIG") or existing.get("ORIG", ""),
-                    "DEST": item.get("DEST") or existing.get("DEST", ""),
-                    "STAND": item.get("STAND") or existing.get("STAND", ""),
-                    "BR": item.get("BR") or existing.get("BR", ""),
-                    "RWY": item.get("RWY") or existing.get("RWY", ""),
-                    "ETA": item.get("ETA") or existing.get("ETA", ""),
-                    "ATA": item.get("ATA") or existing.get("ATA", ""),
-                    "NO": item.get("NO") or existing.get("NO", ""),
-                    "last_seen": datetime.now().isoformat(timespec="seconds"),
-                }
-                accumulated[key] = merged
-            self._write_json(self.fvm_reg_path, accumulated)
+            })

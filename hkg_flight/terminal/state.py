@@ -49,10 +49,6 @@ class AppState(object):
         self.help_open = False
         self.return_page = DEPARTURES
         self.message = ""
-        # Id of the entity reconcile lost on the last degradation (None when
-        # nothing was lost). Lets the UI -- and tests -- tell "re-selected a
-        # neighbour because ours disappeared" apart from "still on ours".
-        self.lost_selection_id = None
 
 
 def _page(state, name=None):
@@ -143,7 +139,6 @@ def _switch_page(state, name):
     if name in FLIGHT_PAGES:
         state.return_page = name
     state.message = ""
-    state.lost_selection_id = None
 
 
 def _clear_filters(state, page):

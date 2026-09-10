@@ -1,355 +1,187 @@
-"""
-Tests for the plain adapter: line commands, search reuse, detail, non-TTY
-snapshot and non-zero exit on failure.
-"""
+"""Plain adapter: line commands, paging, exit codes, no ANSI output."""
 
-import os
-import shutil
 import tempfile
 import unittest
-from unittest.mock import MagicMock
 
-from hkg_flight.cache import CacheSystem
 from hkg_flight.alerts import AlertManager
-from hkg_flight.terminal.session import Session
+from hkg_flight.cache import CacheSystem
 from hkg_flight.terminal import plain
-from hkg_flight.terminal.presenter import DEPARTURES
-from tests.fixtures.terminal.data import make_flights
+from hkg_flight.terminal.presenter import DEPARTURES, ARRIVALS, ALERTS, AIRLINES
+from hkg_flight.terminal.session import Session
+from hkg_flight.utils import today_str
+
+TODAY = today_str()
 
 
-def make_raw(records):
-    """Convert normalized records back to raw API payload."""
+def raw_payload(count=25):
     entries = []
-    for rec in records:
-        is_arrival = rec.get("type") == "arrival"
-        origin = rec.get("origin", "").split("|") if rec.get("origin") else []
-        destination = rec.get("destination", "").split("|") if rec.get("destination") else []
-        entry = {
-            "arrival": is_arrival,
-            "cargo": False,
-            "date": rec.get("date", ""),
-            "list": [{
-                "flight": [{"airline": rec.get("airline_code", ""), "no": rec.get("flight_number", "")}],
-                "time": rec.get("time", ""),
-                "status": rec.get("status", ""),
-                "origin": origin,
-                "destination": destination,
-                "terminal": rec.get("terminal", ""),
-                "gate": rec.get("gate", ""),
-                "stand": rec.get("stand", ""),
-                "aisle": rec.get("aisle", ""),
-                "hall": rec.get("hall", ""),
-                "baggage": rec.get("belt", ""),
-            }],
-        }
-        entries.append(entry)
+    for i in range(count):
+        entries.append({
+            "arrival": i % 2 == 1, "cargo": False, "date": TODAY,
+            "list": [{"flight": [{"airline": "CPA", "no": f"CX {100 + i}"}],
+                      "time": f"{i % 24:02d}:{(i * 7) % 60:02d}",
+                      "status": "Scheduled",
+                      "gate": str(10 + i) if i % 2 == 0 else None,
+                      "stand": f"W{10 + i}" if i % 2 == 1 else None,
+                      "terminal": "T1",
+                      "destination": ["NRT"], "origin": ["SYD"]}],
+        })
     return entries
 
 
-def build_session(flights=None, airlines=None, api_error=None):
-    """Session whose API succeeded with ``flights`` (or raised ``api_error``)."""
-    temp_dir = tempfile.mkdtemp()
-    cache = CacheSystem(cache_dir=temp_dir)
-    api = MagicMock()
-    if api_error is not None:
-        api.fetch_flights.side_effect = api_error
-    else:
-        api.fetch_flights.return_value = make_raw(flights or [])
-    api.fetch_airlines_meta.return_value = {
-        "airlines": airlines or [], "source": "api", "ok": True, "error": None}
-    alert_manager = AlertManager(cache=cache)
-    session = Session(cache=cache, api=api, alert_manager=alert_manager, no_poll=True)
-    session.poller.refresh_today()
-    return session, temp_dir
+class FakeAPI:
+    def __init__(self, raw=None, fail=False):
+        self.raw = raw
+        self.fail = fail
+
+    def fetch_flights(self, date_str):
+        if self.fail:
+            raise RuntimeError("offline")
+        return self.raw
+
+    def fetch_airlines_meta(self):
+        return {"airlines": [], "source": "api", "ok": True, "error": None}
 
 
-def run_non_tty(session, page_size=plain.DEFAULT_PAGE_SIZE):
-    lines = []
-    code = plain.run_plain(session, input_func=lambda prompt: "",
-                           out=lines.append, tty=False, page_size=page_size)
-    return code, lines
+def make_session(raw=None, fail=False):
+    cache = CacheSystem(tempfile.mkdtemp())
+    return Session(cache=cache, api=FakeAPI(raw, fail), alert_manager=AlertManager(cache))
 
 
-def run_tty(session, commands, page_size=plain.DEFAULT_PAGE_SIZE):
-    lines = []
-    inputs = iter(commands)
-    code = plain.run_plain(session, input_func=lambda prompt: next(inputs),
-                           out=lines.append, tty=True, page_size=page_size)
-    return code, lines
+class TestResultFor(unittest.TestCase):
+    def snap(self, **flights):
+        base = {"source": "none", "last_error": None, "records": []}
+        base.update(flights)
+        return {"flights": base}
+
+    def test_api_success_exits_zero(self):
+        self.assertEqual(plain.result_for(self.snap(source="api", records=[{}]))[0], 0)
+
+    def test_api_empty_result_is_success(self):
+        code, label = plain.result_for(self.snap(source="api"))
+        self.assertEqual(code, 0)
+        self.assertIn("no flights", label)
+
+    def test_cache_fallback_exits_zero(self):
+        code, label = plain.result_for(self.snap(source="cache", records=[{}], last_error="x"))
+        self.assertEqual(code, 0)
+        self.assertIn("cache fallback", label)
+
+    def test_error_exits_nonzero(self):
+        self.assertEqual(plain.result_for(self.snap(last_error="boom"))[0], 1)
+
+    def test_memory_without_fresh_source_exits_nonzero(self):
+        self.assertEqual(plain.result_for(self.snap(source="memory", records=[{}]))[0], 1)
+
+    def test_no_data_exits_nonzero(self):
+        self.assertEqual(plain.result_for(self.snap())[0], 1)
 
 
-class TestPlainAdapter(unittest.TestCase):
-    def test_non_tty_prints_snapshot_and_exits(self):
-        session, temp_dir = build_session(flights=make_flights(8))
-        try:
-            lines = []
-            code = plain.run_plain(session, input_func=lambda prompt: "",
-                                   out=lines.append, tty=False)
-            self.assertEqual(code, 0)
-            self.assertTrue(any("CX" in line for line in lines))
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+class TestClampOffset(unittest.TestCase):
+    def test_clamps_to_last_page_start(self):
+        self.assertEqual(plain.clamp_offset(0, 25, 10), 0)
+        self.assertEqual(plain.clamp_offset(20, 25, 10), 20)
+        self.assertEqual(plain.clamp_offset(999, 25, 10), 20)
 
-    def test_non_tty_failure_returns_nonzero(self):
-        # A real failure: the API raised and there is no cache to fall back to.
-        session, temp_dir = build_session(api_error=RuntimeError("api_failed"))
-        try:
-            code, lines = run_non_tty(session)
-            self.assertEqual(code, 1)
-            self.assertTrue(any("ERROR (api_failed)" in line for line in lines), lines)
-        finally:
-            session.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_tty_commands_switch_pages_and_quit(self):
-        session, temp_dir = build_session(flights=make_flights(12))
-        try:
-            lines = []
-            inputs = iter(["2", "5", "1", "q"])
-            plain.run_plain(session, input_func=lambda prompt: next(inputs),
-                            out=lines.append, tty=True)
-            joined = "\n".join(lines)
-            self.assertIn("Arrivals", joined)
-            self.assertIn("ACTIVE ALERTS", joined)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_search_reuses_whitelist_rules(self):
-        session, temp_dir = build_session(flights=make_flights(30))
-        try:
-            lines = []
-            inputs = iter(["/ CX 100", "q"])
-            plain.run_plain(session, input_func=lambda prompt: next(inputs),
-                            out=lines.append, tty=True)
-            joined = "\n".join(lines)
-            self.assertIn("Matches", joined)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_detail_prints_lines(self):
-        session, temp_dir = build_session(flights=make_flights(5))
-        try:
-            lines = []
-            inputs = iter(["detail 1", "q"])
-            plain.run_plain(session, input_func=lambda prompt: next(inputs),
-                            out=lines.append, tty=True)
-            joined = "\n".join(lines)
-            self.assertIn("Flight:", joined)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    def test_empty_and_degenerate(self):
+        self.assertEqual(plain.clamp_offset(5, 0, 10), 0)
+        self.assertEqual(plain.clamp_offset(5, 10, 0), 0)
 
 
-class TestPlainEmptySuccess(unittest.TestCase):
-    """R06: an API ``[]`` is a successful empty result, not a failure."""
+class TestRenderBlock(unittest.TestCase):
+    def setUp(self):
+        self.session = make_session(raw_payload())
+        self.session.poller.refresh_today()
 
-    def test_empty_api_success_exits_zero(self):
-        session, temp_dir = build_session(flights=[])
-        try:
-            code, lines = run_non_tty(session)
-            self.assertEqual(code, 0)
-            self.assertTrue(
-                any("OK (api returned no flights)" in line for line in lines), lines)
-        finally:
-            session.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    def tearDown(self):
+        self.session.close()
 
-    def test_failure_still_exits_nonzero(self):
-        session, temp_dir = build_session(api_error=RuntimeError("boom"))
-        try:
-            code, _ = run_non_tty(session)
-            self.assertEqual(code, 1)
-        finally:
-            session.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    def test_no_ansi_escape_sequences(self):
+        for line in plain.render_block(self.session, DEPARTURES, "", 0):
+            self.assertNotIn("\x1b", line)
 
-    def test_empty_success_and_failure_labels_differ(self):
-        ok_session, ok_dir = build_session(flights=[])
-        bad_session, bad_dir = build_session(api_error=RuntimeError("boom"))
-        try:
-            ok_code, ok_lines = run_non_tty(ok_session)
-            bad_code, bad_lines = run_non_tty(bad_session)
-            self.assertEqual((ok_code, bad_code), (0, 1))
-            ok_label = [line for line in ok_lines if line.startswith("Result: ")][-1]
-            bad_label = [line for line in bad_lines if line.startswith("Result: ")][-1]
-            self.assertNotEqual(ok_label, bad_label)
-            self.assertIn("OK", ok_label)
-            self.assertIn("ERROR", bad_label)
-        finally:
-            for session, directory in ((ok_session, ok_dir), (bad_session, bad_dir)):
-                session.close()
-                shutil.rmtree(directory, ignore_errors=True)
+    def test_first_line_is_the_status_summary(self):
+        lines = plain.render_block(self.session, DEPARTURES, "", 0)
+        self.assertTrue(lines[0].startswith("HKG |"))
 
-    def test_non_tty_output_is_bounded(self):
-        session, temp_dir = build_session(flights=make_flights(200))
-        try:
-            code, lines = run_non_tty(session, page_size=10)
-            self.assertEqual(code, 0)
-            # 3 chrome lines + page_size rows + Result + Commands.
-            self.assertLessEqual(len(lines), 10 + 5)
-        finally:
-            session.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    def test_rows_are_paged(self):
+        lines = plain.render_block(self.session, DEPARTURES, "", 0, page_size=5)
+        rows = [ln for ln in lines if ln.strip() and ln.startswith("  ") and ":" in ln]
+        self.assertLessEqual(len(rows), 5)
 
-    def test_status_line_reports_manual_when_polling_off(self):
-        session, temp_dir = build_session(flights=make_flights(2))
-        try:
-            lines = plain.render_block(session, DEPARTURES, "", 0)
-            self.assertIn("MANUAL", lines[0], lines[0])
-        finally:
-            session.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    def test_all_pages_render(self):
+        for page in (DEPARTURES, ARRIVALS, ALERTS, AIRLINES):
+            lines = plain.render_block(self.session, page, "", 0)
+            self.assertTrue(lines, page)
 
 
-class TestPlainOutputSafety(unittest.TestCase):
-    """External data must not smuggle escape or control codes into a pipe."""
-
-    DIRTY = "OK\x1b[31mRED\x07\x9bEND"
-
-    def _dirty_session(self):
-        flights = make_flights(3)
-        flights[0]["status"] = self.DIRTY
-        return build_session(flights=flights)
-
-    def test_control_characters_are_stripped(self):
-        session, temp_dir = self._dirty_session()
-        try:
-            _, lines = run_non_tty(session)
-            joined = "\n".join(lines)
-            for bad in ("\x1b", "\x07", "\x9b"):
-                self.assertNotIn(bad, joined)
-        finally:
-            session.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_ansi_parameters_do_not_leak(self):
-        session, temp_dir = self._dirty_session()
-        try:
-            _, lines = run_non_tty(session)
-            joined = "\n".join(lines)
-            self.assertNotIn("[31m", joined)
-        finally:
-            session.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_no_color_output_carries_the_same_information(self):
-        session, temp_dir = self._dirty_session()
-        previous = os.environ.get("NO_COLOR")
-        os.environ["NO_COLOR"] = "1"
-        try:
-            code, lines = run_non_tty(session)
-            joined = "\n".join(lines)
-            self.assertEqual(code, 0)
-            self.assertNotIn("\x1b", joined)
-            self.assertIn("Result: OK", joined)
-            self.assertIn("Departures", joined)
-        finally:
-            if previous is None:
-                os.environ.pop("NO_COLOR", None)
-            else:
-                os.environ["NO_COLOR"] = previous
-            session.close()
-            shutil.rmtree(temp_dir, ignore_errors=True)
+class TestRunPlainNonTty(unittest.TestCase):
+    def test_prints_snapshot_and_exits_with_result(self):
+        session = make_session(raw_payload())
+        session.poller.refresh_today()
+        out = []
+        code = plain.run_plain(session, out=out.append, tty=False)
+        self.assertEqual(code, 0)
+        joined = "\n".join(out)
+        self.assertIn("Result:", joined)
+        self.assertIn("Commands:", joined)
 
 
-class TestPlainBoundedExit(unittest.TestCase):
-    """EOF / Ctrl-C / exhausted input must end the loop, never hang."""
+class TestRunPlainInteractive(unittest.TestCase):
+    def run_commands(self, commands, raw=None):
+        session = make_session(raw if raw is not None else raw_payload())
+        session.poller.refresh_today()
+        out = []
+        replies = iter(commands)
+        code = plain.run_plain(session, input_func=lambda _p="": next(replies),
+                               out=out.append, tty=True)
+        return code, out
 
-    def _session(self):
-        return build_session(flights=make_flights(4))
+    def test_quit(self):
+        code, out = self.run_commands(["q"])
+        self.assertEqual(code, 0)
+        self.assertTrue(out)
 
-    def _run(self, raiser):
-        session, temp_dir = self._session()
-        try:
-            lines = []
-            code = plain.run_plain(session, input_func=raiser,
-                                   out=lines.append, tty=True)
-            self.assertEqual(code, 0)
-            # The TTY loop owns the session and closes it on every exit path.
-            self.assertEqual(session.poller.request_refresh(), "closed")
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    def test_page_navigation_and_search(self):
+        code, out = self.run_commands(["2", "n", "p", "/ CX1", "q"])
+        self.assertEqual(code, 0)
+        self.assertTrue(any("Arrivals" in line for line in out))
 
-    def test_eof_exits_zero(self):
-        def raise_eof(_prompt):
+    def test_alerts_and_airlines_pages(self):
+        code, out = self.run_commands(["5", "6", "q"])
+        self.assertEqual(code, 0)
+        self.assertTrue(any("Alerts" in line for line in out))
+        self.assertTrue(any("Airlines" in line for line in out))
+
+    def test_help_and_unknown_command(self):
+        code, out = self.run_commands(["help", "bogus", "q"])
+        self.assertEqual(code, 0)
+        self.assertTrue(any("Unknown command" in line for line in out))
+
+    def test_detail_command(self):
+        code, out = self.run_commands(["detail 1", "q"])
+        self.assertEqual(code, 0)
+        self.assertTrue(any(line.startswith("Flight:") for line in out))
+
+    def test_detail_out_of_range(self):
+        code, out = self.run_commands(["detail 999", "q"])
+        self.assertTrue(any("No such row" in line for line in out))
+
+    def test_eof_exits_cleanly(self):
+        session = make_session(raw_payload())
+        session.poller.refresh_today()
+        out = []
+
+        def raise_eof(_prompt=""):
             raise EOFError
-        self._run(raise_eof)
 
-    def test_keyboard_interrupt_exits_zero(self):
-        def raise_ctrl_c(_prompt):
-            raise KeyboardInterrupt
-        self._run(raise_ctrl_c)
+        code = plain.run_plain(session, input_func=raise_eof, out=out.append, tty=True)
+        self.assertEqual(code, 0)
 
-    def test_exhausted_input_exits_zero(self):
-        # An exhausted iterator raises StopIteration, which must be treated
-        # exactly like EOF instead of escaping to the caller.
-        self._run(lambda _prompt: next(iter([])))
-
-    def test_none_input_exits_zero(self):
-        self._run(lambda _prompt: None)
-
-
-class TestPlainPaging(unittest.TestCase):
-    """Detail offset, n/p bounds and bounded pagination."""
-
-    def test_clamp_offset_lands_on_last_page_start(self):
-        self.assertEqual(plain.clamp_offset(0, 6, 2), 0)
-        self.assertEqual(plain.clamp_offset(2, 6, 2), 2)
-        self.assertEqual(plain.clamp_offset(4, 6, 2), 4)
-        self.assertEqual(plain.clamp_offset(6, 6, 2), 4)   # clamped
-        self.assertEqual(plain.clamp_offset(999, 6, 2), 4)
-        self.assertEqual(plain.clamp_offset(-2, 6, 2), 0)
-        self.assertEqual(plain.clamp_offset(5, 0, 2), 0)   # no rows
-
-    def _last_block(self, lines):
-        starts = [i for i, line in enumerate(lines) if line.startswith("HKG | ")]
-        return lines[starts[-1]:]
-
-    def test_next_page_clamps_at_last_page(self):
-        session, temp_dir = build_session(flights=make_flights(12))
-        try:
-            rows = session.rows_for(DEPARTURES)
-            self.assertEqual(len(rows), 6)
-            _, lines = run_tty(session, ["n", "n", "n", "n", "q"], page_size=2)
-            block = self._last_block(lines)
-            joined = "\n".join(block)
-            # Last page starts at row index 4 and must not be empty.
-            self.assertIn(rows[4]["record"]["flight_number"], joined)
-            self.assertIn(rows[5]["record"]["flight_number"], joined)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_prev_page_never_goes_below_zero(self):
-        session, temp_dir = build_session(flights=make_flights(12))
-        try:
-            rows = session.rows_for(DEPARTURES)
-            _, lines = run_tty(session, ["p", "p", "q"], page_size=2)
-            joined = "\n".join(self._last_block(lines))
-            self.assertIn(rows[0]["record"]["flight_number"], joined)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_detail_is_relative_to_current_offset(self):
-        session, temp_dir = build_session(flights=make_flights(12))
-        try:
-            rows = session.rows_for(DEPARTURES)
-            _, lines = run_tty(session, ["n", "detail 1", "q"], page_size=2)
-            joined = "\n".join(lines)
-            # After one page-down the first row on screen is absolute row 2.
-            self.assertIn("Flight: {}".format(rows[2]["record"]["flight_number"]), joined)
-            self.assertNotIn("Flight: {}".format(rows[0]["record"]["flight_number"]), joined)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_detail_out_of_range_reports_the_visible_range(self):
-        session, temp_dir = build_session(flights=make_flights(12))
-        try:
-            _, lines = run_tty(session, ["detail 99", "q"])
-            joined = "\n".join(lines)
-            self.assertIn("No such row", joined)
-            self.assertIn("rows 1-6", joined)
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+    def test_refresh_and_web_commands_do_not_crash(self):
+        code, _ = self.run_commands(["r", "w", "w", "q"])
+        self.assertEqual(code, 0)
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

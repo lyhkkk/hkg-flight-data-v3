@@ -9,9 +9,8 @@ The base package uses only the Python 3.7+ standard library and provides:
 
 ## Requirements
 
-- Python 3.7 or newer (base package, no third-party packages required)
-- Enhanced terminal UI: Python 3.9+ (project target 3.11 / 3.13) plus the
-  optional `.[tui]` install group
+- Python 3.9 or newer (base package, no third-party packages required)
+- Enhanced terminal UI: the optional `.[tui]` install group (adds Textual)
 
 ## Quick Start
 
@@ -173,5 +172,5 @@ python -m ruff check .
 
 The enhanced UI interaction tests (under `tests/`) run when Textual is
 installed and are skipped otherwise. CI is the authoritative cross-platform
-result (base matrix 3.7/3.11/3.13, enhanced matrix 3.11/3.13 on Linux and
+result (base matrix 3.9/3.11/3.13, enhanced matrix 3.11/3.13 on Linux and
 Windows).

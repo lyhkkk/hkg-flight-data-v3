@@ -1,9 +1,9 @@
 """
-Deterministic offline fixtures for the terminal test suite.
+Deterministic offline fixtures for the test suite.
 
-Flight records are normalized records (the form the presenter consumes).
-They include same-day same-direction duplicates, missing fields, unicode and
-codeshares so identity/search/ordering behaviour can be tested offline.
+Flight records are normalized records (the form the presenter consumes). They
+include same-day same-direction duplicates, missing fields, unicode and
+codeshares, so identity / search / ordering behaviour can be tested offline.
 """
 
 from hkg_flight.utils import make_flight_key
@@ -28,31 +28,30 @@ STATUSES = [
 ]
 TERMINALS = ["T1", "T1", "T1", "T2", ""]
 
+DEFAULT_DATE = "2026-09-09"
 
-def make_flight(index, date="2026-09-09"):
+
+def make_flight(index, date=DEFAULT_DATE):
     """Build one normalized flight record (deterministic per index)."""
     airline_i = index % len(AIRLINE_CODES)
-    airline = AIRLINE_CODES[airline_i]
     icao = ICAO_CODES[airline_i]
-    number = airline + str(100 + (index % 800))
+    number = AIRLINE_CODES[airline_i] + str(100 + (index % 800))
     is_arrival = (index % 2) == 1
     status_raw, category = STATUSES[index % len(STATUSES)]
     codeshare = ""
     if index % 7 == 0:
-        codeshare = "|".join(["{}".format(number), "QR{}".format(9000 + index % 999)])
+        codeshare = "|".join([number, f"QR{9000 + index % 999}"])
+
     rec = {
         "key": make_flight_key(date, number),
         "date": date,
-        "time": "{:02d}:{:02d}".format((index * 7) % 24, (index * 11) % 60),
+        "time": f"{(index * 7) % 24:02d}:{(index * 11) % 60:02d}",
         "flight_number": number,
         "airline_code": icao,
         "all_flight_numbers": codeshare or number,
         "type": "arrival" if is_arrival else "departure",
         "status": status_raw,
-        "statusCode": None,
         "status_category": category,
-        "status_display": status_raw,
-        "status_label": status_raw,
         "terminal": TERMINALS[index % len(TERMINALS)],
         "gate": str(1 + (index % 80)) if not is_arrival and index % 5 else "",
         "aisle": "ABCDE"[index % 5] if not is_arrival else "",
@@ -63,13 +62,13 @@ def make_flight(index, date="2026-09-09"):
         "destination": DESTINATIONS[index % len(DESTINATIONS)] if not is_arrival else "HKG",
     }
     if index % 11 == 0:
-        # long / unicode route sample (Chinese + combining mark)
+        # Long / unicode route sample (CJK occupies two display cells).
         rec["destination"] = "北京" if not is_arrival else rec["destination"]
         rec["origin"] = "東京" if is_arrival else rec["origin"]
     return rec
 
 
-def make_flights(count, date="2026-09-09"):
+def make_flights(count, date=DEFAULT_DATE):
     """Generate ``count`` normalized flight records."""
     records = [make_flight(i, date=date) for i in range(count)]
     # Inject same-day, same-direction duplicate segments (distinct stand/belt).
@@ -84,7 +83,7 @@ def make_flights(count, date="2026-09-09"):
     return records
 
 
-def make_alert(index, date="2026-09-09"):
+def make_alert(index, date=DEFAULT_DATE):
     """Build one active alert dict."""
     flight = make_flight(index, date=date)
     field = "GATE" if index % 2 == 0 else "STAND"
@@ -102,20 +101,20 @@ def make_alert(index, date="2026-09-09"):
         "old_value": "62" if field == "GATE" else "W62",
         "new_value": new_value,
         "status": flight["status"],
-        "raised_at": "2026-09-09T{:02d}:{:02d}:00".format(23 - (index % 24), 59 - (index % 60)),
+        "raised_at": f"2026-09-09T{23 - (index % 24):02d}:{59 - (index % 60):02d}:00",
     }
 
 
-def make_alerts(count, date="2026-09-09"):
+def make_alerts(count, date=DEFAULT_DATE):
     return [make_alert(i, date=date) for i in range(count)]
 
 
 def make_airline(index):
-    code = "{}{}{}".format(chr(65 + (index % 26)), chr(65 + ((index // 26) % 26)), str(index % 10))
+    code = "{}{}{}".format(chr(65 + (index % 26)), chr(65 + ((index // 26) % 26)), index % 10)
     return {
         "code": code,
-        "description": ["Airline {} 航空".format(index), "Airline {} 航空".format(index)],
-        "icon": "wmo{}".format(code.lower()),
+        "description": [f"Airline {index} 航空", f"Airline {index} 航空"],
+        "icon": f"wmo{code.lower()}",
     }
 
 
@@ -123,8 +122,8 @@ def make_airlines(count):
     return [make_airline(i) for i in range(count)]
 
 
-def make_flights_snapshot(count, date="2026-09-09", source="api"):
-    """A snapshot dict in the poller's shape."""
+def make_flights_snapshot(count, date=DEFAULT_DATE, source="api"):
+    """A flights snapshot in the poller's published shape."""
     return {
         "revision": 1,
         "records_date": date,
@@ -136,11 +135,10 @@ def make_flights_snapshot(count, date="2026-09-09", source="api"):
         "last_error": None,
         "refreshing": False,
         "polling_enabled": True,
-        "next_refresh_at": None,
     }
 
 
-def make_combined_snapshot(count, date="2026-09-09", source="api"):
+def make_combined_snapshot(count, date=DEFAULT_DATE, source="api"):
     """A full session snapshot: flights + alerts + airlines + web."""
     return {
         "flights": make_flights_snapshot(count, date=date, source=source),

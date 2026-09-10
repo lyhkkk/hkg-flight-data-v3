@@ -7,7 +7,7 @@ name = "hkg-flight-data"
 version = "3.0.0"
 description = "Flight information retrieval tools for Hong Kong International Airport"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
   { name = "HKG Flight Data Team" },
@@ -15,7 +15,9 @@ authors = [
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.13",
   "Environment :: Console",
   "Topic :: Internet",
 ]
@@ -34,7 +36,7 @@ include = ["hkg_flight*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py37"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F"]

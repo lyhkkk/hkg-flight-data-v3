@@ -1,13 +1,17 @@
 """
-HKG Flight Data v3 - CLI Module
-Command-line interface and entry point.
+HKG Flight Data v3 - CLI.
+
+Argument parsing, one-shot query commands, and the entry point that selects
+between the Textual workbench and the plain fallback. Table output reuses the
+terminal views, so the CLI and the workbench render rows the same way.
 """
 
 import argparse
+import os
 import re
 import sys
-import os
 import time
+from datetime import datetime, timedelta, timezone
 
 from .cache import CacheSystem, DEFAULT_CACHE_DIR, DEFAULT_WEB_PORT
 from .api import APIClient
@@ -15,374 +19,199 @@ from .alerts import AlertManager
 from .utils import (
     today_str,
     normalize_flight_number,
-    route_text,
-    gate_stand_text,
     log,
     normalize_flights,
     sort_flights,
 )
-
+from .terminal import views
+from .terminal.presenter import detail_lines
 
 DEFAULT_PAGE_SIZE = 10
+DEFAULT_WIDTH = views.DEFAULT_WIDTH
+
+_HKT = timezone(timedelta(hours=8))
+
+# A stand is one of the HKIA prefixes followed by 1-3 digits. "G" is excluded
+# so gate queries (G28) stay distinct, and the digit requirement keeps short
+# flight numbers such as BA15 or SQ2 out of stand matching.
+_STAND_RE = re.compile(r"[WNRSEDX]\d{1,3}")
+_GATE_RE = re.compile(r"G\d+")
+_AIRLINE_RE = re.compile(r"[A-Z]{2}")
 
 
-def _is_stand(query):
-    """Check if query matches a supported HKIA stand identifier."""
-    if not query:
-        return False
-    return bool(re.fullmatch(r"[WNRSEDX]\d{1,3}", str(query).strip().upper()))
+# -- query ---------------------------------------------------------------
+
+def _is_stand(term):
+    return bool(_STAND_RE.fullmatch(term))
 
 
-def _is_gate(query):
-    """Check if query matches gate format (e.g., G28, G63)."""
-    return bool(re.fullmatch(r"G\d+", query.upper()))
+def _is_gate(term):
+    return bool(_GATE_RE.fullmatch(term))
 
 
-def _is_airline_code(query):
-    """Check if query matches a 2-letter airline code (e.g., CX, HX, UO)."""
-    if not query:
-        return False
-    return bool(re.fullmatch(r"[A-Z]{2}", str(query).strip().upper()))
+def _is_airline_code(term):
+    return bool(_AIRLINE_RE.fullmatch(term))
 
 
-def _extract_gate_number(query):
-    """Extract gate number from query (e.g., G28 -> 28)."""
-    match = re.fullmatch(r"G(\d+)", query.upper())
-    return match.group(1) if match else query
+def _search_dates(date_str):
+    """Dates to search when the caller did not pin one (HKT-aware).
+
+    22:00-01:59 spans midnight, so late-night and early-morning queries look at
+    the neighbouring day as well; 02:00-21:59 searches today only.
+    """
+    if date_str:
+        return [date_str]
+    now = datetime.now(_HKT)
+    today = now.date()
+    if now.hour >= 22:
+        return [today.isoformat(), (today + timedelta(days=1)).isoformat()]
+    if now.hour < 2:
+        return [(today - timedelta(days=1)).isoformat(), today.isoformat()]
+    return [today.isoformat()]
+
+
+def _matches(records, term, include_codeshare):
+    """Match ``term`` against one dataset using the specialized search modes."""
+    if _is_gate(term):
+        gate = term[1:].upper()
+        return [r for r in records if r.get("gate", "").upper() == gate]
+    if _is_stand(term):
+        return [r for r in records if r.get("stand", "").upper() == term]
+    if _is_airline_code(term):
+        hits = []
+        for rec in records:
+            if rec.get("airline_code", "").upper() == term:
+                hits.append(rec)
+            elif rec.get("flight_number", "").startswith(term):
+                hits.append(rec)
+            elif include_codeshare and any(
+                    no.startswith(term)
+                    for no in rec.get("all_flight_numbers", "").split("|") if no):
+                hits.append(rec)
+        return hits
+    return _matches_flight_number(records, term, include_codeshare)
+
+
+def _matches_flight_number(records, term, include_codeshare):
+    return [
+        r for r in records
+        if term in r.get("flight_number", "")
+        or (include_codeshare and term in r.get("all_flight_numbers", ""))
+    ]
 
 
 def search_flights(api, flight_number, date_str=None, include_codeshare=False):
+    """Search flights by flight number, airline code, gate or stand.
+
+    Stand/gate searches fall back to a flight-number match when they find
+    nothing, so an input such as ``D7`` never silently hides a flight.
     """
-    Search for flights by flight number.
-    
-    Searches for flights where the primary flight number contains the search term.
-    By default, excludes codeshare flights unless include_codeshare is True.
-    
-    Search range rules (HKT timezone):
-    - If date specified: search only that day
-    - 02:00-22:00 HKT: search current day only
-    - 22:00-02:00 HKT: search current day + next day (for late night flights)
+    term = normalize_flight_number(flight_number)
 
-    Search modes:
-    - Stand (e.g. W63): exact stand match
-    - Gate (e.g. G28): exact gate match
-    - Airline code (e.g. CX): primary airline code or flight number prefix
-    - Flight number (e.g. CX759): contains match on primary flight number
+    records = []
+    for d in _search_dates(date_str):
+        raw = api.fetch_flights(d)
+        if raw is not None:
+            records.extend(normalize_flights(raw))
 
-    Args:
-        api: APIClient instance
-        flight_number: Flight number to search for
-        date_str: Optional date in YYYY-MM-DD format
-        include_codeshare: If True, also search codeshare flight numbers
+    # De-duplicate by cache key, preserving first-seen order.
+    unique, seen = [], set()
+    for rec in records:
+        key = rec.get("key", "")
+        if key not in seen:
+            seen.add(key)
+            unique.append(rec)
 
-    Returns:
-        list: Matching flight records
-    """
-    from datetime import datetime, timezone, timedelta as td
-    
-    search_no = normalize_flight_number(flight_number)
-    
-    # If date specified, search only that day
-    if date_str:
-        dates_to_search = [date_str]
-    else:
-        # Get current HKT time (UTC+8)
-        hkt = timezone(td(hours=8))
-        now_hkt = datetime.now(hkt)
-        current_hour = now_hkt.hour
-        today = now_hkt.date()
-        
-        # Determine search range based on HKT time
-        # 22:00-23:59: search today + next day (late night flights)
-        # 00:00-01:59: search yesterday + today (early morning flights)
-        # 02:00-21:59: search today only
-        if current_hour >= 22:
-            # 22:00-23:59: search today + next day
-            dates_to_search = [
-                today.isoformat(),                         # Today (D)
-                (today + td(days=1)).isoformat(),          # Next day (D+1)
-            ]
-        elif current_hour < 2:
-            # 00:00-01:59: search yesterday + today
-            dates_to_search = [
-                (today - td(days=1)).isoformat(),          # Yesterday (D-1)
-                today.isoformat(),                         # Today (D)
-            ]
-        else:
-            # 02:00-21:59: search today only
-            dates_to_search = [today.isoformat()]  # Today (D)
-    
-    all_results = []
-    all_records = []
-    seen_keys = set()
-    
-    # Determine search mode
-    is_stand_search = _is_stand(search_no) and not _is_gate(search_no)
-    is_gate_search = _is_gate(search_no)
-    is_airline_search = _is_airline_code(search_no) and not is_stand_search and not is_gate_search
-    
-    for d in dates_to_search:
-        raw_data = api.fetch_flights(d)
-        if raw_data is None:
-            continue
-        
-        records = normalize_flights(raw_data)
-        all_records.extend(records)
-        
-        for rec in records:
-            key = rec.get("key", "")
-            if key in seen_keys:
-                continue
-            
-            matched = False
-            
-            if is_stand_search:
-                # Search by stand (exact match, case-insensitive)
-                rec_stand = rec.get("stand", "").upper()
-                if rec_stand == search_no.upper():
-                    matched = True
-            elif is_gate_search:
-                # Search by gate (exact match, case-insensitive)
-                # Extract number from query (e.g., G28 -> 28)
-                gate_num = _extract_gate_number(search_no)
-                rec_gate = rec.get("gate", "")
-                if rec_gate.upper() == gate_num.upper():
-                    matched = True
-            elif is_airline_search:
-                # Search by 2-letter airline code (e.g., CX = all Cathay flights)
-                # Match the primary airline code or the flight number prefix
-                if rec.get("airline_code", "").upper() == search_no:
-                    matched = True
-                elif rec.get("flight_number", "").startswith(search_no):
-                    matched = True
-                elif include_codeshare:
-                    # Also match codeshare flight numbers carrying this airline code
-                    for no in rec.get("all_flight_numbers", "").split("|"):
-                        if no and no.startswith(search_no):
-                            matched = True
-                            break
-            else:
-                # Search primary flight number (contains match)
-                if search_no in rec.get("flight_number", ""):
-                    matched = True
-                # Optionally search codeshare flight numbers
-                elif include_codeshare and search_no in rec.get("all_flight_numbers", ""):
-                    matched = True
-            
-            if matched:
-                all_results.append(rec)
-                seen_keys.add(key)
-    
-    # An input such as D7 can be either a stand or a short flight number.
-    # Never silently hide a flight when the specialized search found nothing.
-    if not all_results and (is_stand_search or is_gate_search):
-        fallback_term = search_no
-        fallback_results = []
-        fallback_seen = set()
-        for rec in all_records:
-            key = rec.get("key", "")
-            if key in fallback_seen:
-                continue
-            if fallback_term in rec.get("flight_number", ""):
-                fallback_results.append(rec)
-                fallback_seen.add(key)
-            elif include_codeshare and fallback_term in rec.get("all_flight_numbers", ""):
-                fallback_results.append(rec)
-                fallback_seen.add(key)
-        all_results = fallback_results
+    results = _matches(unique, term, include_codeshare)
+    if not results and (_is_stand(term) or _is_gate(term)):
+        results = _matches_flight_number(unique, term, include_codeshare)
 
-    # Sort by date and time
-    all_results.sort(key=lambda r: (r.get("date", ""), r.get("time", "")))
-    
-    return all_results
+    results.sort(key=lambda r: (r.get("date", ""), r.get("time", "")))
+    return results
 
 
 def flights_for_date(api, date_str, flight_type="all"):
-    """
-    Get flights for a specific date.
-
-    Args:
-        api: APIClient instance
-        date_str: Date in YYYY-MM-DD format
-        flight_type: 'arrival', 'departure', or 'all'
-
-    Returns:
-        list: Flight records
-    """
-    raw_data = api.fetch_flights(date_str)
-    if raw_data is None:
+    """Normalized + sorted records for one date, optionally one direction."""
+    raw = api.fetch_flights(date_str)
+    if raw is None:
         return []
-
-    records = normalize_flights(raw_data)
-    records = sort_flights(records)
-
-    if flight_type == "arrival":
-        records = [r for r in records if r.get("type") == "arrival"]
-    elif flight_type == "departure":
-        records = [r for r in records if r.get("type") == "departure"]
-
-    return records
-
-
-def _merge_fvm_data(api, records):
-    """Merge FVM registration data into flight records."""
-    fvm_data = api.fetch_fvm_registrations()
-    if not fvm_data:
-        return records
-
-    fvm_lookup = {}
-    for item in fvm_data:
-        key = normalize_flight_number(item.get("flight_id", ""))
-        if key:
-            fvm_lookup[key] = item
-
-    for rec in records:
-        flight_no = rec.get("flight_number", "")
-        if flight_no in fvm_lookup:
-            fvm = fvm_lookup[flight_no]
-            rec["registration"] = fvm.get("REG", "")
-            rec["aircraft_type"] = fvm.get("SUBTYPE", "")
-
+    records = sort_flights(normalize_flights(raw))
+    if flight_type in ("arrival", "departure"):
+        records = [r for r in records if r.get("type") == flight_type]
     return records
 
 
 def load_airlines(api):
-    """Load airline metadata."""
+    """Load airline metadata as a plain list."""
     return api.fetch_airlines()
 
 
+# -- cache maintenance ---------------------------------------------------
+
 def clear_cache(cache, date_str=None, confirm=False):
-    """
-    Clear cached data safely.
-    
-    Args:
-        cache: CacheSystem instance
-        date_str: Specific date to clear, or None to clear all
-        confirm: If True, skip confirmation prompt
+    """Delete cached flight/airline/alert files.
+
+    Only files this project owns are ever removed, so a mistyped
+    ``--cache-dir`` cannot take unrelated files with it.
     """
     cache_dir = cache.cache_dir
-    
-    # Safety check: only delete if it's the expected cache directory
-    basename = os.path.basename(os.path.abspath(cache_dir))
-    if basename != ".hkg_flight_cache" and not basename.startswith("hkg_flight"):
-        log("Refusing to delete non-cache directory: {}".format(cache_dir))
-        print("Error: Refusing to delete non-cache directory: {}".format(cache_dir))
-        return
-    
+
     if date_str:
-        cache.write_flights(date_str, None)
-        print("Cleared cache for {}".format(date_str))
-    else:
-        # Confirm before deleting all cache
-        if not confirm:
-            response = input("Delete ALL cache in {}? (yes/no): ".format(cache_dir))
-            if response.lower() != "yes":
-                print("Cancelled.")
-                return
+        cache.clear_flights(date_str)
+        print(f"Cleared cache for {date_str}")
+        return
 
-        if os.path.exists(cache_dir):
-            # Delete files individually instead of rmtree
-            for filename in os.listdir(cache_dir):
-                filepath = os.path.join(cache_dir, filename)
-                try:
-                    if os.path.isfile(filepath):
-                        os.remove(filepath)
-                except Exception as exc:
-                    log("Failed to delete {}: {}".format(filepath, exc))
-            print("Cleared all cache in {}".format(cache_dir))
+    if not confirm:
+        if input(f"Delete ALL cache in {cache_dir}? (yes/no): ").lower() != "yes":
+            print("Cancelled.")
+            return
 
+    removed = 0
+    for filename in sorted(os.listdir(cache_dir)) if os.path.isdir(cache_dir) else []:
+        owned = (filename.startswith("flights_") and filename.endswith(".json")) \
+            or filename in ("airlines.json", "alerts.json")
+        if not owned:
+            continue
+        try:
+            os.remove(os.path.join(cache_dir, filename))
+            removed += 1
+        except OSError as exc:
+            log(f"Failed to delete {filename}: {exc}")
+    print(f"Cleared {removed} cache file(s) in {cache_dir}")
+
+
+# -- rendering -----------------------------------------------------------
 
 def print_flight_details(rec, index=None):
-    """Print detailed flight information."""
-    if index is not None:
-        print("\n--- Flight #{} ---".format(index))
-    else:
-        print("\n--- Flight Details ---")
-
-    print("Flight: {}".format(rec.get("flight_number", "N/A")))
-    print("Date: {}".format(rec.get("date", "N/A")))
-    print("Time: {}".format(rec.get("time", "N/A")))
-    print("Type: {}".format(rec.get("type", "N/A")))
-    print("Status: {}".format(rec.get("status", "N/A")))
-    print("Route: {}".format(route_text(rec)))
-    print("Gate/Stand: {}".format(gate_stand_text(rec)))
-    print("Terminal: {}".format(rec.get("terminal", "N/A")))
-    if rec.get("registration"):
-        print("Registration: {}".format(rec.get("registration")))
-    if rec.get("aircraft_type"):
-        print("Aircraft: {}".format(rec.get("aircraft_type")))
+    """Print the labeled detail view for one flight."""
+    header = f"--- Flight #{index} ---" if index is not None else "--- Flight Details ---"
+    print(f"\n{header}")
+    for label, value in detail_lines(rec):
+        print(f"{label}: {value}")
 
 
-def format_flight_row(rec, include_registration=False):
-    """Format one compact flight row for CLI list output."""
-    columns = [
-        rec.get("time", "--:--"),
-        rec.get("flight_number", "N/A"),
-    ]
-    if include_registration:
-        columns.append(rec.get("registration", "-") or "-")
-    columns.extend([
-        route_text(rec)[:20],
-        rec.get("status", "N/A")[:18],
-        gate_stand_text(rec)[:12],
-        rec.get("terminal", "-") or "-",
-    ])
-    widths = [6, 10]
-    if include_registration:
-        widths.append(6)
-    widths.extend([20, 18, 12, 5])
-    return " ".join("{:<{}}".format(value, width) for value, width in zip(columns, widths)).rstrip()
-
-
-def print_compact_flights(records, title, include_registration=False, max_rows=None):
-    """Print flights as one compact row per flight."""
+def _print_table(records, title, width=DEFAULT_WIDTH):
+    """One compact row per flight, using the shared row renderer."""
     if not records:
         print("No flights found.")
         return
-
-    displayed = records if max_rows is None else records[:max_rows]
-    print("\n{} — {} flight(s)".format(title, len(records)))
-    print()
-    headers = ["TIME", "FLIGHT"]
-    if include_registration:
-        headers.append("REG")
-    headers.extend(["ROUTE", "STATUS", "GATE/STAND", "TERM"])
-    widths = [6, 10]
-    if include_registration:
-        widths.append(6)
-    widths.extend([20, 18, 12, 5])
-    print(" ".join("{:<{}}".format(header, width) for header, width in zip(headers, widths)).rstrip())
-    print("-" * (sum(widths) + len(widths) - 1))
-    for rec in displayed:
-        print(format_flight_row(rec, include_registration=include_registration))
-
-    if len(displayed) < len(records):
-        print("\n... and {} more flights".format(len(records) - len(displayed)))
+    print(f"\n{title} — {len(records)} flight(s)\n")
+    print(views.flight_header(width))
+    print(views.rule(width))
+    for rec in records:
+        print(views.flight_row(rec, width)[0])
 
 
 def print_flight_table(records, title):
-    """Print flights in the compact one-row-per-flight format."""
-    print_compact_flights(records, title, include_registration=True, max_rows=50)
+    """Print flights as a compact table (CLI list commands)."""
+    _print_table(records, title)
 
 
-def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE, input_func=input):
-    """
-    Display records in an interactive pager, page_size rows per page.
+def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE,
+                     input_func=input, width=DEFAULT_WIDTH):
+    """Display records in an interactive pager, ``page_size`` rows per page.
 
-    Navigation:
-    - Enter or 'n': next page
-    - 'p': previous page
-    - number: jump to that page
-    - 'q': quit
-
-    Args:
-        records: List of normalized flight records
-        title: Title shown above each page
-        page_size: Rows per page (default: 10)
-        input_func: Input source (injectable for testing)
-
-    Returns:
-        int: Last page displayed
+    Navigation: Enter/``n`` next, ``p`` previous, a number to jump, ``q`` quit.
     """
     total = len(records)
     if total == 0:
@@ -391,24 +220,15 @@ def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE, input_func=inp
 
     total_pages = (total + page_size - 1) // page_size
     page = 1
-
     while True:
         start = (page - 1) * page_size
         end = min(start + page_size, total)
-
-        print("\n{} — {} flight(s), showing {}-{}".format(title, total, start + 1, end))
-        print()
-        print("{:<6} {:<10} {:<20} {:<18} {:<12} {:<5}".format(
-            "TIME", "FLIGHT", "ROUTE", "STATUS", "GATE/STAND", "TERM"
-        ))
-        print("-" * 80)
-
+        print(f"\n{title} — {total} flight(s), showing {start + 1}-{end}\n")
+        print(views.flight_header(width))
+        print(views.rule(width))
         for rec in records[start:end]:
-            print(format_flight_row(rec))
-
-        print("\nPage {}/{} — [Enter/N]ext [P]rev [Q]uit, or type a page number".format(
-            page, total_pages
-        ))
+            print(views.flight_row(rec, width)[0])
+        print(f"\nPage {page}/{total_pages} — [Enter/N]ext [P]rev [Q]uit, or type a page number")
 
         try:
             choice = input_func("> ").strip().lower()
@@ -418,130 +238,95 @@ def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE, input_func=inp
 
         if choice in ("q", "quit", "exit"):
             break
-        elif choice in ("n", ""):
+        if choice in ("n", ""):
             page = min(page + 1, total_pages)
         elif choice in ("p", "prev", "previous"):
             page = max(page - 1, 1)
-        elif choice.isdigit():
-            num = int(choice)
-            if 1 <= num <= total_pages:
-                page = num
-            else:
-                print("Page number out of range (1-{})".format(total_pages))
+        elif choice.isdigit() and 1 <= int(choice) <= total_pages:
+            page = int(choice)
 
     return page
 
 
-def cmd_query(args, api):
-    """Handle 'query' command."""
-    results = search_flights(api, args.flight, args.date, include_codeshare=args.codeshare)
+# -- commands ------------------------------------------------------------
 
-    if results:
-        if args.details:
-            for i, rec in enumerate(results, 1):
-                print_flight_details(rec, i)
-        elif _is_airline_code(args.flight) or len(results) > DEFAULT_PAGE_SIZE:
-            # Airline code search (e.g. CX) or large result set:
-            # compact list, 10 flights per page with N/P navigation
-            paginate_records(
-                results,
-                "{} flights {}".format(args.flight.upper(), args.date or ""),
-                page_size=DEFAULT_PAGE_SIZE,
-            )
-        else:
-            print_compact_flights(
-                results,
-                "{} flights {}".format(args.flight.upper(), args.date or ""),
-            )
+def cmd_query(args, api):
+    results = search_flights(api, args.flight, args.date, include_codeshare=args.codeshare)
+    title = f"{args.flight.upper()} flights {args.date or ''}".strip()
+
+    if not results:
+        print(f"No flights found for '{args.flight}'")
+    elif args.details:
+        for i, rec in enumerate(results, 1):
+            print_flight_details(rec, i)
+    elif _is_airline_code(normalize_flight_number(args.flight)) or len(results) > DEFAULT_PAGE_SIZE:
+        paginate_records(results, title, page_size=DEFAULT_PAGE_SIZE)
     else:
-        print("No flights found for '{}'".format(args.flight))
+        _print_table(results, title)
 
     if not args.codeshare:
         print("\nTip: Use --codeshare to include codeshare flights")
-
     return 0
 
 
 def cmd_departures(args, api):
-    """Handle 'departures' command."""
     date_str = args.date or today_str()
-    records = flights_for_date(api, date_str, "departure")
-    print_flight_table(records, "Departures {}".format(date_str))
+    print_flight_table(flights_for_date(api, date_str, "departure"), f"Departures {date_str}")
     return 0
 
 
 def cmd_arrivals(args, api):
-    """Handle 'arrivals' command."""
     date_str = args.date or today_str()
-    records = flights_for_date(api, date_str, "arrival")
-    print_flight_table(records, "Arrivals {}".format(date_str))
+    print_flight_table(flights_for_date(api, date_str, "arrival"), f"Arrivals {date_str}")
     return 0
 
 
 def cmd_alerts(alert_manager):
-    """Handle 'alerts' command."""
     active = alert_manager.get_active()
-
     if not active:
         print("No active alerts.")
         return 0
-
-    print("Active alerts: {}".format(len(active)))
+    print(f"Active alerts: {len(active)}")
     for alert in active:
-        field = alert.get("field", "UNKNOWN")
-        old_val = alert.get("old_value", "")
-        new_val = alert.get("new_value", "")
-        flight = alert.get("flight_number", "N/A")
-        status = alert.get("status", "")
-        raised = alert.get("raised_at", "")
-
         print("⚠ {} {} change: {} → {} | status: {} | raised: {}".format(
-            flight, field, old_val, new_val, status, raised
-        ))
-
+            alert.get("flight_number", "N/A"), alert.get("field", "UNKNOWN"),
+            alert.get("old_value", ""), alert.get("new_value", ""),
+            alert.get("status", ""), alert.get("raised_at", "")))
     return 0
 
 
 def cmd_clear_cache(args, cache):
-    """Handle 'clear-cache' command."""
     clear_cache(cache, args.date, confirm=args.yes)
     return 0
 
 
 def cmd_web(args, poller, api, alert_manager):
-    """Handle 'web' command - start web server."""
-    try:
-        from .web import WebServer
-    except ImportError:
-        print("Web server module not available.")
-        return 1
+    """Start the web server in the foreground until Ctrl+C."""
+    from .web import WebServer
 
-    web_server = WebServer(poller, api, alert_manager, port=args.port)
-    if not web_server.start():
-        print("Could not start web server on port {}".format(args.port))
+    server = WebServer(poller, api, alert_manager, port=args.port)
+    if not server.start():
+        print(f"Could not start web server on port {args.port}")
         return 1
 
     print("✈ HKG Flight Data web server")
-    print("  http://127.0.0.1:{}".format(args.port))
+    print(f"  http://127.0.0.1:{args.port}")
     print("  Press Ctrl+C to stop")
-
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
-        web_server.stop()
-
+        server.stop()
     return 0
 
 
-def _run_terminal_ui(args, cache, api, alert_manager, port, no_poll, ui="auto"):
-    """Run the rebuilt terminal workbench through one Session lifecycle.
+def _run_terminal_ui(cache, api, alert_manager, port, no_poll, ui="auto"):
+    """Run the terminal workbench through one Session lifecycle.
 
-    The session is the single owner of the poller, the web server and the
-    airline loader; every exit path goes through ``finally`` so terminal
-    state and owned resources are always released.
+    The session owns the poller, the web server and the airline loader; every
+    exit path goes through ``finally`` so owned resources are always released.
     """
     import importlib.util
 
@@ -551,10 +336,10 @@ def _run_terminal_ui(args, cache, api, alert_manager, port, no_poll, ui="auto"):
     textual_available = importlib.util.find_spec("textual") is not None
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
 
-    if ui == "textual" and (not textual_available or not interactive):
-        reason = "Textual is not installed" if not textual_available else "not an interactive terminal"
-        print("Error: --ui textual requires the enhanced UI, but {}.".format(reason),
-              file=sys.stderr)
+    if ui == "textual" and not (textual_available and interactive):
+        reason = "Textual is not installed" if not textual_available \
+            else "not an interactive terminal"
+        print(f"Error: --ui textual requires the enhanced UI, but {reason}.", file=sys.stderr)
         print("Install with: pip install 'hkg-flight-data[tui]'", file=sys.stderr)
         return 1
 
@@ -566,17 +351,14 @@ def _run_terminal_ui(args, cache, api, alert_manager, port, no_poll, ui="auto"):
             if not textual_available:
                 print("Textual not installed; using plain mode. "
                       "Install 'hkg-flight-data[tui]' for the full workbench.", file=sys.stderr)
-            elif not interactive:
+            else:
                 print("Not an interactive terminal; using plain mode.", file=sys.stderr)
     else:
         backend = ui
 
     session = Session(
-        cache=cache,
-        api=api,
-        alert_manager=alert_manager,
-        port=port,
-        no_poll=no_poll,
+        cache=cache, api=api, alert_manager=alert_manager,
+        port=port, no_poll=no_poll,
     )
     try:
         session.start()
@@ -590,124 +372,82 @@ def _run_terminal_ui(args, cache, api, alert_manager, port, no_poll, ui="auto"):
         session.close()
 
 
+# -- entry point ---------------------------------------------------------
+
 def create_parser():
-    """Create the argument parser."""
     parser = argparse.ArgumentParser(
         prog="hkg_flight",
-        description="HKG Flight Data v3 - Flight information system for Hong Kong International Airport",
-        epilog="Example: python -m hkg_flight query CX759"
+        description="HKG Flight Data v3 - flight information for Hong Kong International Airport",
+        epilog="Example: python -m hkg_flight query CX759",
     )
-    
-    # Global options
-    parser.add_argument(
-        "--cache-dir", 
-        default=DEFAULT_CACHE_DIR,
-        help="Custom cache directory (default: ~/.hkg_flight_cache)"
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Bypass cached airline data for this run"
-    )
-    
-    # Subcommands
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
-    # query command
-    query_parser = subparsers.add_parser("query", help="Search for a flight by number")
-    query_parser.add_argument(
-        "flight",
-        help="Flight number (CX759), airline code (CX), gate (G28), or stand (W63)"
-    )
-    query_parser.add_argument("date", nargs="?", default=None, help="Date in YYYY-MM-DD format (default: D-1, D, D+1)")
-    query_parser.add_argument("--codeshare", action="store_true", help="Include codeshare flights")
-    query_parser.add_argument("--details", "-d", action="store_true", help="Show detailed flight information")
-    
-    # departures command
-    departures_parser = subparsers.add_parser("departures", help="List departures")
-    departures_parser.add_argument("date", nargs="?", default=None, help="Date in YYYY-MM-DD format (default: today)")
-    
-    # arrivals command
-    arrivals_parser = subparsers.add_parser("arrivals", help="List arrivals")
-    arrivals_parser.add_argument("date", nargs="?", default=None, help="Date in YYYY-MM-DD format (default: today)")
-    
-    # alerts command
-    subparsers.add_parser("alerts", help="Show active alerts")
-    
-    # clear-cache command
-    clear_parser = subparsers.add_parser("clear-cache", help="Clear cached data")
-    clear_parser.add_argument("date", nargs="?", default=None, help="Specific date to clear (default: all)")
-    clear_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
-    
-    # web command
-    web_parser = subparsers.add_parser("web", help="Start web server")
-    web_parser.add_argument("--port", "-p", type=int, default=DEFAULT_WEB_PORT, help="Web server port (default: 8080)")
-    
-    # tui command (default when no subcommand)
-    tui_parser = subparsers.add_parser("tui", help="Start TUI interface")
-    tui_parser.add_argument("--no-poll", action="store_true", help="Disable live polling")
-    tui_parser.add_argument("--port", "-p", type=int, default=DEFAULT_WEB_PORT, help="Web server port for W key (default: 8080)")
-    tui_parser.add_argument(
-        "--ui",
-        choices=["auto", "textual", "plain"],
-        default="auto",
-        help="Terminal backend: auto (detect), textual (require enhanced UI), plain (stdlib fallback)",
-    )
-    
+    parser.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR,
+                        help="Custom cache directory (default: ~/.hkg_flight_cache)")
+    parser.add_argument("--force", action="store_true",
+                        help="Bypass cached airline data for this run")
+
+    sub = parser.add_subparsers(dest="command")
+
+    q = sub.add_parser("query", help="Search for a flight by number")
+    q.add_argument("flight", help="Flight number (CX759), airline code (CX), gate (G28) or stand (W63)")
+    q.add_argument("date", nargs="?", default=None, help="Date YYYY-MM-DD (default: today, or the neighbouring day across midnight)")
+    q.add_argument("--codeshare", action="store_true", help="Include codeshare flights")
+    q.add_argument("--details", "-d", action="store_true", help="Show full flight details")
+
+    d = sub.add_parser("departures", help="List departures")
+    d.add_argument("date", nargs="?", default=None, help="Date YYYY-MM-DD (default: today)")
+
+    a = sub.add_parser("arrivals", help="List arrivals")
+    a.add_argument("date", nargs="?", default=None, help="Date YYYY-MM-DD (default: today)")
+
+    sub.add_parser("alerts", help="Show active alerts")
+
+    c = sub.add_parser("clear-cache", help="Clear cached data")
+    c.add_argument("date", nargs="?", default=None, help="Specific date to clear (default: all)")
+    c.add_argument("--yes", "-y", action="store_true", help="Skip the confirmation prompt")
+
+    w = sub.add_parser("web", help="Start web server")
+    w.add_argument("--port", "-p", type=int, default=DEFAULT_WEB_PORT, help="Port (default: 8080)")
+
+    t = sub.add_parser("tui", help="Start the terminal workbench")
+    t.add_argument("--no-poll", action="store_true", help="Disable timed polling")
+    t.add_argument("--port", "-p", type=int, default=DEFAULT_WEB_PORT, help="Port for the W key (default: 8080)")
+    t.add_argument("--ui", choices=["auto", "textual", "plain"], default="auto",
+                   help="Backend: auto (detect), textual (require enhanced UI), plain (stdlib fallback)")
+
     return parser
 
 
 def main(argv=None):
-    """Main entry point."""
-    parser = create_parser()
-    args = parser.parse_args(argv)
-    
-    # Initialize components
+    args = create_parser().parse_args(argv)
+
     cache = CacheSystem(cache_dir=args.cache_dir)
     api = APIClient(cache=cache)
     alert_manager = AlertManager(cache=cache)
-    
-    # Force mode bypasses airline metadata cache for this run; flight requests
-    # already call the API directly and poller fallback remains available.
+
     if args.force:
         api.bypass_cache = True
         print("Force mode: bypassing cached airline data for this run")
-    
-    # Handle commands
+
     if args.command == "query":
         return cmd_query(args, api)
-    elif args.command == "departures":
+    if args.command == "departures":
         return cmd_departures(args, api)
-    elif args.command == "arrivals":
+    if args.command == "arrivals":
         return cmd_arrivals(args, api)
-    elif args.command == "alerts":
+    if args.command == "alerts":
         return cmd_alerts(alert_manager)
-    elif args.command == "clear-cache":
+    if args.command == "clear-cache":
         return cmd_clear_cache(args, cache)
-    elif args.command == "web":
-        # Import poller for web mode
-        try:
-            from .poller import Poller
-            poller = Poller(cache=cache, api=api, alert_manager=alert_manager)
-            poller.start()
-        except ImportError:
-            poller = None
+    if args.command == "web":
+        from .poller import Poller
+        poller = Poller(cache=cache, api=api, alert_manager=alert_manager)
+        poller.start(blocking=True)
         return cmd_web(args, poller, api, alert_manager)
-    elif args.command == "tui":
-        return _run_terminal_ui(
-            args, cache, api, alert_manager,
-            port=getattr(args, "port", DEFAULT_WEB_PORT),
-            no_poll=getattr(args, "no_poll", False),
-            ui=getattr(args, "ui", "auto"),
-        )
-    else:
-        # Default: start TUI with auto backend (no --port/--no-poll on bare entry)
-        return _run_terminal_ui(
-            args, cache, api, alert_manager,
-            port=DEFAULT_WEB_PORT,
-            no_poll=False,
-            ui="auto",
-        )
+    if args.command == "tui":
+        return _run_terminal_ui(cache, api, alert_manager,
+                                port=args.port, no_poll=args.no_poll, ui=args.ui)
+    return _run_terminal_ui(cache, api, alert_manager,
+                            port=DEFAULT_WEB_PORT, no_poll=False, ui="auto")
 
 
 if __name__ == "__main__":

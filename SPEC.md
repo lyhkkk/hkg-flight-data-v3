@@ -2,317 +2,257 @@
 
 ## 1. Overview
 
-A self-contained Python information retrieval system for Hong Kong International Airport (HKG) flight data. Backend continuously polls the official HKIA REST API with polite rate limiting, caches locally, detects changes (especially gate/stand), and generates alerts. Frontend is a terminal flight workbench (optional Textual UI with a stdlib plain fallback), a CLI, and an optional web server mode.
+A self-contained flight information system for Hong Kong International Airport.
+A background poller fetches the official HKIA REST API with polite rate
+limiting, caches locally, detects gate/stand changes and raises alerts. Three
+front-ends read the same snapshots: a terminal workbench (optional Textual UI
+with a stdlib plain fallback), a CLI, and an optional web dashboard.
+
+This document describes the system as built. It is a description, not a
+constraint: implementation choices belong in the code and its tests.
 
 ## 2. Architecture
 
-The implementation is a Python package under `hkg_flight/`, executed with
-`python -m hkg_flight`. Older single-file diagrams and commands below are
-historical and should be read as logical components rather than current file
-names.
-
 ```
-┌─────────────────────────────────────────────────┐
-│                   hkg_flight/                    │
-│  ┌───────────┐  ┌────────────┐  ┌────────────┐  │
-│  │  Backend   │  │  Frontend  │  │ Web Server │  │
-│  │ (poller+   │  │ (terminal) │  │ (toggle)   │  │
-│  │  cache+    │  │            │  │            │  │
-│  │  alerts)   │  │            │  │            │  │
-│  └─────┬─────┘  └─────┬──────┘  └─────┬──────┘  │
-│        │              │               │          │
-│        └──────┬───────┘               │          │
-│               │  snapshot bridge      │          │
-│               └───────────────────────┘          │
-└─────────────────────────────────────────────────┘
-         │                           │
-    ┌────┴────┐                ┌─────┴─────┐
-    │HKIA API │                │  Browser  │
-    │(remote) │                │  (web)    │
-    └─────────┘                └───────────┘
+hkg_flight/
+  utils.py       pure helpers: dates, status mapping, normalization, text safety
+  api.py         HKIA REST client with serialized rate limiting
+  cache.py       atomic on-disk JSON cache
+  alerts.py      gate/stand change detection and the alert lifecycle
+  poller.py      one worker thread; publishes immutable flight snapshots
+  cli.py         argument parsing, one-shot queries, entry point
+  web.py         HTTP server + single-page dashboard
+  terminal/
+    presenter.py   projection, whitelist search, stable row identity
+    state.py       pure UI reducer (state, rows, action) -> (state, commands)
+    views.py       pure string rendering, shared by both front-ends
+    session.py     owns the poller, the web toggle and the airline loader
+    plain.py       line-command driver (pipes, scripts, NO_COLOR)
+    textual_app.py optional enhanced UI (requires Textual)
+    theme.tcss     enhanced UI styles
 ```
 
-The rebuilt terminal frontend lives under `hkg_flight/terminal/`:
+Data flow is one-directional:
 
-- `session.py` — session lifecycle, command serialization, snapshot bridge
-- `state.py` — page/focus/filter/selection state and pure transitions
-- `presenter.py` — whitelist search, stable ordering, field projection
-- `views.py` — pure string rendering of the four pages, detail, filter, help
-- `plain.py` — stdlib line-command fallback and non-TTY output
-- `textual_app.py` — optional enhanced UI (requires Textual)
-- `theme.tcss` — enhanced UI styles
+```
+HKIA API -> normalize -> immutable snapshot -> views
+                              |
+                              +-> diff vs previous snapshot -> alerts
+```
 
-The UI layer only reads snapshots and posts commands; it never starts threads,
-stops servers or calls the API. The poller owns one worker thread and publishes
-atomic, defensive snapshots; `request_refresh` coalesces manual and timed
-refreshes into a single in-flight request.
+The UI layer only reads snapshots and posts commands. It never starts threads,
+stops servers or calls the API — `session.py` is the single owner of all three.
 
 ## 3. Data Source
 
-### 3.1 API Endpoints
+### 3.1 Endpoints
 
 | Endpoint | URL | Use |
 |---|---|---|
-| Flights (current/future) | `GET /flightinfo-rest/rest/flights?date=YYYY-MM-DD&span=1` | Today and future |
-| Flights (past) | `GET /flightinfo-rest/rest/flights/past?date=YYYY-MM-DD&span=1` | Historical |
+| Flights | `GET /flightinfo-rest/rest/flights?date=YYYY-MM-DD&span=1` | Today and future |
 | Airlines | `GET /flightinfo-rest/rest/airlines` | Airline metadata |
 
 Base URL: `https://www.hongkongairport.com`
 
-### 3.2 Flight Data Fields
+### 3.2 Response shape
 
-Each API response is a list of entries. Each entry has:
-- `arrival` (bool): true = arrival, false = departure
-- `cargo` (bool): true = cargo flight (skip)
-- `date` (string): YYYY-MM-DD
-- `list` (array): array of flight objects
+Each response is a list of entries:
 
-Each flight object in `list`:
-- `flight` (array): `[{airline, no}]` — codeshare list, first = primary
-- `time` (string): HH:MM planned time
-- `status` (string): e.g. "Departed 08:54", "At gate 23:42"
-- `statusCode` (string|null): internal code
-- `origin` (array[string]): IATA codes (arrivals)
-- `destination` (array[string]): IATA codes (departures)
-- `terminal` (string): T1 or T2 (may be empty)
-- `gate` (string): gate number (departures)
-- `aisle` (string): aisle letter (departures)
-- `hall` (string): arrival hall letter (arrivals)
-- `baggage` (string): belt number (arrivals)
-- `stand` (string): parking stand (arrivals)
+- `arrival` (bool) — true = arrival, false = departure
+- `cargo` (bool) — cargo entries are skipped
+- `date` (string) — `YYYY-MM-DD`
+- `list` (array) — flight objects
 
-Stand search in CLI query mode accepts HKIA stand identifiers with prefixes
-`W`, `N`, `R`, `S`, `E`, `D`, or `X` followed by 1–3 digits. This prevents
-short airline flight numbers such as `BA15` or `SQ2` from being classified as
-stands.
+Each flight object:
 
-Real samples contain same-day, same-direction duplicate segments (same flight
-number and time, different stand/belt/hall), so the UI row identity is built
-from the full projected record, not `{date}_{flight_number}`. The cache/alert
-key format is unchanged.
+- `flight` (array) — `[{airline, no}]`; the first entry is primary
+- `time` (string) — `HH:MM` scheduled time
+- `status` (string) — e.g. `Dep 00:13`, `At gate 01:06 (11/09/2026)`
+- `origin` / `destination` (array of IATA codes)
+- `terminal`, `gate`, `aisle`, `hall`, `baggage`, `stand` (strings, may be null)
 
-### 3.3 Polite Rate Limiting
+Real payloads carry the full IATA number in `no` (`{"airline": "CKS", "no":
+"K4 701"}`), where `airline` is the 3-letter ICAO code. A numeric-only `no` is
+completed with a 2-letter airline code so `query CX759` works either way.
 
-- Minimum interval between API calls: **0.6 seconds** (reference uses 0.5s)
-- When fetching multiple dates: 0.6s between each date
-- Polling cycle for live updates: every **30 seconds** (today's flights only)
-- Cache expiry: 5 minutes for today's data, 24 hours for historical
+### 3.3 Rate limiting and fallback
 
-The rate-limit timing is serialized so concurrent callers (poller, airline
-loader, web queries) cannot all observe the same free slot.
+- Minimum 0.6 s between API calls; the timing decision is serialized so
+  concurrent callers cannot all observe the same free slot.
+- Polling cycle: every 30 s (today's flights only).
+- Airline metadata: 24 h cache; `--force` bypasses it for one run.
 
-### 3.4 Fallback Strategy
-
-1. Try live API call
-2. On failure: use cached data (if available)
-3. Log warning: `⚠ API failed for {date}, using cache (age: {minutes}m)`
+Fallback order: live API → cached file → previous in-memory snapshot.
 
 ## 4. Backend
 
-### 4.1 Cache System
+### 4.1 Cache
 
-Storage: `~/.hkg_flight_cache/` directory
+Directory `~/.hkg_flight_cache/`:
 
-Files:
 - `flights_YYYY-MM-DD.json` — raw API response per date
 - `airlines.json` — airline metadata
-- `state.json` — last known state of all flights (for change detection)
-- `alerts.json` — pending alerts queue
+- `alerts.json` — active alerts plus retained history
 
-`cache_saved_at` reads the cached file mtime — the local write time, not the
-HKIA data-generation time; when the stat is unavailable it is UNKNOWN.
+Writes are atomic (temp file + `os.replace`). Reads never raise: a missing or
+corrupt file is a cache miss. `cache_saved_at` reports the local file mtime —
+when it was written, not when HKIA generated the data — and is UNKNOWN when the
+stat is unavailable.
 
-### 4.2 Change Detection
+### 4.2 Change detection
 
-Track state changes for each flight by `{date}_{flight_number}` key:
-
-```
-State snapshot per flight:
-{
-  key: "2026-08-16_CX759",
-  flight_number: "CX759",
-  date: "2026-08-16",
-  time: "08:40",
-  type: "departure",
-  status: "Boarding",
-  terminal: "T1",
-  gate: "63",         ← WATCHED
-  stand: "W63",       ← WATCHED
-  aisle: "E",
-  hall: "",
-  belt: "",
-  last_updated: "2026-08-16T08:30:00"
-}
-```
-
-**Alert triggers** (only for gate and stand changes):
-- Gate changed: `⚠ CX759 GATE: 62 → 63`
-- Stand changed: `⚠ CX759 STAND: W62 → W63`
-- Alert persists until status becomes `boarding`/`departed`/`arrived`/`landed`
-
-### 4.3 Alert Lifecycle
+Flights are tracked per `{date}_{flight_number}` key. Only **gate** and
+**stand** changes raise alerts:
 
 ```
-gate/stand change detected
-  → alert raised (visible in TUI and web)
-  → alert stays active while status ∈ {scheduled, gate closed, boarding soon, final call, est at xx:xx, delayed}
-  → alert cleared when status ∈ {boarding, departed, arrived, landed, cancelled}
+⚠ CX759 GATE: 62 → 63
+⚠ CX759 STAND: W62 → W63
 ```
 
-The alert manager exposes a monotonic, read-only `alerts_revision` that
-advances whenever the active set changes; the UI consumes that revision, not a
-shared mutable flag.
+An alert persists while the flight is still pending and is cleared once the
+status becomes boarding / departed / arrived / landed / cancelled.
+
+### 4.3 Alert lifecycle
+
+The manager exposes a monotonic read-only `alerts_revision()` that advances
+whenever the active set changes; the UI polls that counter rather than sharing
+a mutable flag. `snapshot()` returns per-alert copies, so the poller thread can
+keep updating the live set without disturbing a caller that already read it.
 
 ### 4.4 Poller
 
-- When TUI is running: poll today's flights every 30s
-- Detect changes by diffing new API response against the in-memory snapshot
-- Generate alerts for gate/stand changes
-- Write updated state and alerts to disk
+- One worker thread; one writer, and `_refresh` never runs concurrently with
+  itself. There is no second writer, so no generation counters or late-result
+  reordering are needed.
+- A manual request arriving mid-refresh returns `already_running` instead of
+  queueing, so the refresh slot can never be double-claimed.
+- `start(blocking=True)` refreshes on the calling thread before the worker
+  starts (used by `web`, which wants data ready). The TUI uses the default
+  non-blocking start.
+- `--no-poll` disables timed refreshes but still performs one first refresh.
+- A failed request still advances the revision, so the UI can show that a
+  refresh was attempted.
 
-One start, one poller chain: the session owns the poller and starts it with a
-non-blocking first refresh that runs exactly once. `--no-poll` disables timed
-refreshes but still performs one background first refresh; `r` requests a
-manual refresh. Requests are coalesced into a single in-flight refresh, and a
-failed request still advances the health revision.
+Records are **published, never mutated**: `normalize_flights` builds a fresh
+list of fresh dicts each cycle and nothing writes to it afterwards, so a
+snapshot needs only a shallow list copy to stay safe.
 
-## 5. Frontend — CLI/TUI
+## 5. Frontend
 
-### 5.1 Entry Point
+### 5.1 Entry points
 
 ```bash
 python -m hkg_flight                  # Terminal workbench (auto backend)
 python -m hkg_flight tui --ui textual # Require enhanced UI
 python -m hkg_flight tui --ui plain   # Stdlib line-command fallback
-python -m hkg_flight tui --no-poll    # Disable live polling
-python -m hkg_flight web              # Start web server
-python -m hkg_flight web --port 8080
+python -m hkg_flight tui --no-poll    # Disable timed polling
+python -m hkg_flight web [--port N]   # Web dashboard
 ```
 
 `auto` selects the enhanced Textual UI when Python, Textual and an interactive
 terminal are available; otherwise it prints the reason and uses plain mode.
 `auto` never installs dependencies.
 
-### 5.2 Workbench Layout
+### 5.2 Layout
 
 Four pages — departures, arrivals, alerts, airlines — plus a detail overlay, a
-filter panel and help. Layout tiers by terminal size: ≥120×24 shows a list
-with a side detail panel; 80–119 columns a single list with an overlay detail;
-40–79 columns a two-line compact row; below 40 columns or 16 rows a size hint
-(with state preserved). Selection and viewport scroll are tracked separately.
+filter panel and help. Layout tiers by terminal size: ≥120×24 shows a list with
+a side detail panel; 80–119 columns a single list with an overlay detail; 40–79
+columns a two-line compact row; below 40 columns or 16 rows a size hint (with
+state preserved). Selection and viewport scroll are tracked separately.
 
-### 5.3 Filtering
+### 5.3 Search and filtering
 
-Press `/` to enter search; the whitelist fields are the flight number,
-codeshare numbers, airline code, origin/destination, gate, stand, terminal and
-status. Terms are ANDed, fields are ORed within a term, and the flight-number
-field is space-normalized so `CX 759` matches `CX759`. Structured filters for
-airline (applied from the airlines page) and status (filter panel, `f`) are
-kept per page.
+`/` enters search. Whitelisted fields: flight number, codeshare numbers, airline
+code, origin/destination, gate, stand, terminal, status. Terms are ANDed, fields
+are ORed within a term, and the flight-number field is space-normalized so
+`CX 759` matches `CX759`. Structured airline and status filters are kept per
+page.
 
-### 5.4 Selection & scrolling
+### 5.4 Selection and scrolling
 
-`↑`/`↓` move a row at a time, `PgUp`/`PgDn` by viewport, `Home`/`End` to the
-ends; `←`/`→` remain page-compatible aliases in list focus. Each page keeps its
-selection, offset, search and filters across refreshes; a disappearing selected
-row falls back to the nearest neighbour.
+`↑`/`↓` move a row, `PgUp`/`PgDn` by viewport, `Home`/`End` to the ends. Each
+page keeps its selection, offset, search and filters across refreshes; a
+disappearing selected row degrades visibly to its nearest neighbour and says so.
 
-### 5.5 Status Display
+### 5.5 Status display
 
-Statuses show both text and a color category (boarding/departed green, delayed
-yellow, cancelled red, etc.). Unknown fields render as `—`; single-color mode
-keeps the selection marker and the status text; `NO_COLOR` disables ANSI color
-everywhere.
+Statuses show text plus a colour category (boarding/departed green, delayed
+yellow, cancelled red, …). Unknown fields render as `—`; `NO_COLOR` disables
+ANSI colour everywhere.
 
-### 5.6 Alert View
+### 5.6 Alert view
 
 Active alerts newest-first, searchable by flight, changed field, before/after
 values and status. `Enter` links to the flight detail when the flight is still
-in the current data, otherwise the alert's own snapshot is shown. Alert counts
-are always the active count, not an unread count.
+in the current data, otherwise the alert's own snapshot is shown. Counts are
+always the active count, not an unread count.
 
-The web server is toggled from the workbench with `w`; its status is shown as
-OFF / ON / ERROR (a busy port reports ERROR, never a false ON).
+The web server is toggled from the workbench with `w`; its status shows OFF /
+ON / ERROR. A busy port reports ERROR, never a false ON.
 
 ## 6. Web Server
 
-### 6.1 Toggle
-
-- Press `W` in TUI to start web server (non-blocking, runs in background thread)
-- Press `W` again to stop
-- Web server status shown in TUI header
-- Default port: 8080
-
-### 6.2 Web API
-
 | Endpoint | Method | Description |
 |---|---|---|
-| `/` | GET | Web UI page |
-| `/api/flights?date=YYYY-MM-DD` | GET | All flights for date |
-| `/api/search?flight=CX759&date=YYYY-MM-DD` | GET | Search flights |
+| `/` | GET | Dashboard (dark theme, HKIA accent `#faa718`) |
+| `/api/flights?date=&type=&terminal=&status=` | GET | Flights for a date |
+| `/api/search?flight=&date=` | GET | Search flights |
 | `/api/alerts` | GET | Active alerts |
-| `/api/stats` | GET | Statistics |
-| `/api/airlines` | GET | Airlines list |
+| `/api/stats` | GET | Server statistics |
+| `/api/airlines` | GET | Airline list |
 
-### 6.3 Web UI
+The dashboard auto-refreshes every 30 s.
 
-Single-page dark theme matching HKIA brand colors (#0f1923 background, #faa718 accent). Features:
-- Search by flight number
-- Filter by date, status, terminal
-- Auto-refresh via 30-second browser polling
-
-## 7. CLI Query Mode
-
-Quick one-shot queries without TUI. Query results use one compact row per
-flight by default; pass `--details` or `-d` for the labeled full view. Large
-result sets and airline-code searches retain the 10-row interactive pager.
+## 7. CLI
 
 ```bash
 python -m hkg_flight query CX759              # Compact one-line result
-python -m hkg_flight query CX759 --details   # Full flight details
-python -m hkg_flight query CX759 2026-08-16   # Compact result for date
-python -m hkg_flight departures               # Today's departures
-python -m hkg_flight arrivals                 # Today's arrivals
-python -m hkg_flight alerts                   # Show active alerts
+python -m hkg_flight query CX759 --details    # Full flight details
+python -m hkg_flight query CX                 # Airline code (paginated)
+python -m hkg_flight query G28                # Gate
+python -m hkg_flight query W63                # HKIA stand (prefixes W/N/R/S/E/D/X)
+python -m hkg_flight departures [DATE]        # Today's departures
+python -m hkg_flight arrivals [DATE]          # Today's arrivals
+python -m hkg_flight alerts                   # Active alerts
+python -m hkg_flight clear-cache [DATE] [--yes]
 ```
 
-## 8. File Structure
+Dates use `YYYY-MM-DD`. Without a date, `query` searches today; between
+22:00–01:59 HKT it also looks at the neighbouring day so late-night and
+early-morning flights are found. A stand or gate query that matches nothing
+falls back to a flight-number match, so an input such as `D7` never silently
+hides a flight. Result sets over 10 rows, and airline-code searches, use a
+10-row interactive pager.
+
+## 8. File structure
 
 ```
 hkg-flight-data-v3/
-├── SPEC.md                    # This file
-├── hkg_flight/                # Main package and module entry point
-│   └── terminal/              # Rebuilt terminal workbench (session/state/
-│                              #   presenter/views/plain/textual_app)
-├── tests/                     # unittest suite (terminal + fixtures)
-├── README.md                  # Usage documentation
-├── test_hkg_flight.py         # Core regression suite
-└── cleanup_alerts.py          # Alert maintenance utility
+├── SPEC.md                 # This file
+├── README.md               # Usage
+├── COMMANDS.md             # Command reference
+├── hkg_flight/             # Main package
+│   └── terminal/           # Terminal workbench
+├── tests/                  # unittest suite + offline fixtures
+├── docs/archive/           # Historical design notes and review reports
+├── test_hkg_flight.py      # Core regression suite
+└── cleanup_alerts.py       # Alert maintenance utility
 ```
-
-The base package is standard-library-only and can be run directly from a
-checkout with `python -m hkg_flight`. The diagram above describes logical
-components; the implementation is split across the modules under `hkg_flight/`.
-
-`state.json` is reserved for the documented flight-state snapshot contract. The
-current poller compares its in-memory records during a process lifetime; using
-that cache for cross-restart change detection remains a separate future task.
 
 ## 9. Dependencies
 
-- Python 3.7+ (base package, standard library only)
-- Optional `.[tui]` extra: `textual>=8,<9` (requires Python 3.9+)
-- Uses: `json`, `urllib`, `os`, `sys`, `time`, `threading`, `http.server`, `datetime`, `signal`, `collections`
+- Python 3.9+ (base package: standard library only)
+- Optional `.[tui]` extra: `textual>=8,<9`
 
-The whole distributed `hkg_flight/` source (including the Textual adapter) must
-remain parseable by Python 3.7; the Textual import happens only after the
-backend selector has chosen the enhanced UI.
+## 10. Design notes
 
-## 10. Implementation Notes
-
-- Threading: poller runs in a daemon thread, web server runs in a daemon thread
-- Thread safety: `threading.Lock` for shared state; snapshots are defensive copies
-- Graceful shutdown: every exit path runs through the session `finally` cleanup
-- Terminal resize handling for TUI
-- Data freshness: a snapshot is STALE after `max(2 × poll_interval, 60s)`;
-  request failures are marked ERROR without waiting for the stale threshold
+- **Threading**: the poller and the web server each run one daemon thread.
+- **Snapshots**: published, never mutated. Readers get shallow copies of the
+  list; the records themselves are never written to after publication.
+- **Text safety**: untrusted API strings are sanitised once, at the data
+  boundary (`utils.clean_text` strips control characters). Renderers therefore
+  do not defend themselves again; the markup layer only escapes `[`.
+- **Shutdown**: every exit path runs through the session's `finally` cleanup.
+- **Freshness**: a snapshot is STALE after `max(2 × poll_interval, 60 s)`;
+  request failures are marked ERROR without waiting for the stale threshold.

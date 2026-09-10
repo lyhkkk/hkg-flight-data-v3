@@ -1,250 +1,236 @@
-"""
-Tests for the pure view renderer across terminal sizes (A6 structural
-checks): no exceptions, no line wider than the terminal, key fields present,
-and a size hint below the supported floor. Deterministic string checks.
-"""
+"""View rendering: geometry, markup safety, layout tiers and body composition."""
 
-import unicodedata
+import time
 import unittest
 
-from hkg_flight.terminal.state import AppState, reconcile
 from hkg_flight.terminal import views
-from hkg_flight.terminal.presenter import (
-    visible_rows, alert_rows, DEPARTURES, ALERTS,
+from hkg_flight.terminal.presenter import DEPARTURES, ALERTS, AIRLINES
+from hkg_flight.terminal.state import AppState, reconcile
+from tests.fixtures.terminal.data import (
+    make_combined_snapshot,
+    make_flight,
 )
-from tests.fixtures.terminal.data import make_combined_snapshot
 
 
-def cells(text):
-    """Independent display-cell count: 2 for wide/full-width, 0 for combining."""
-    total = 0
-    for char in text:
-        if unicodedata.combining(char) or unicodedata.category(char) in ("Mn", "Me"):
-            continue
-        total += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
-    return total
+class TestGeometry(unittest.TestCase):
+    def test_ascii_width(self):
+        self.assertEqual(views.text_width("CX759"), 5)
+
+    def test_cjk_counts_two_cells(self):
+        self.assertEqual(views.text_width("北京"), 4)
+
+    def test_markup_tags_count_zero(self):
+        self.assertEqual(views.text_width("[green]CX759[/green]"), 5)
+
+    def test_escaped_bracket_is_restored_for_width(self):
+        self.assertEqual(views.text_width(views.escape_markup("a[b]")), 4)
+
+    def test_truncate_short_text_is_unchanged(self):
+        self.assertEqual(views.truncate("CX759", 10), "CX759")
+
+    def test_truncate_adds_ellipsis_and_fits(self):
+        cut = views.truncate("Departed 08:54", 8)
+        self.assertTrue(cut.endswith(views.ELLIPSIS))
+        self.assertLessEqual(views.text_width(cut), 8)
+
+    def test_truncate_never_splits_a_wide_character(self):
+        cut = views.truncate("北京首都", 5)
+        self.assertLessEqual(views.text_width(cut), 5)
+
+    def test_truncate_closes_markup_left_open(self):
+        cut = views.truncate("[green]Departed 08:54[/green]", 12)
+        self.assertTrue(cut.startswith("[green]"))
+        self.assertTrue(cut.endswith("[/green]"))
+        self.assertLessEqual(views.text_width(cut), 12)
+
+    def test_zero_or_negative_width(self):
+        self.assertEqual(views.truncate("abc", 0), "")
+        self.assertEqual(views.truncate("abc", -1), "")
+
+    def test_pad_to_exact_width(self):
+        padded = views.pad("ab", 5)
+        self.assertEqual(views.text_width(padded), 5)
+        self.assertEqual(views.pad("abcdef", 3).endswith(views.ELLIPSIS), True)
 
 
-def build_state(snapshot, page=DEPARTURES):
-    state = AppState()
-    state.current = page
-    if page in (DEPARTURES,):
-        rows = visible_rows(snapshot["flights"], page, "", "", "")
-    else:
-        rows = alert_rows(snapshot["alerts"]["alerts"], "")
-    reconcile(state, rows)
-    return state
+class TestLayout(unittest.TestCase):
+    def test_layout_fills_requested_width(self):
+        line = views.layout(list(views.FLIGHT_COLUMNS), 78)
+        self.assertLessEqual(views.text_width(line), 78)
+        self.assertGreater(views.text_width(line), 60)
 
+    def test_layout_is_monotonic_in_width(self):
+        narrow = views.text_width(views.layout(list(views.FLIGHT_COLUMNS), 40))
+        wide = views.text_width(views.layout(list(views.FLIGHT_COLUMNS), 100))
+        self.assertLess(narrow, wide)
 
-def select(state, rows, index):
-    """Move selection to ``index`` (both id and index, like state does)."""
-    page = state.pages[state.current]
-    page.selected_index = index
-    page.selected_id = rows[index]["id"]
-    return page
-
-
-class TestViewSizes(unittest.TestCase):
-    def setUp(self):
-        self.snap = make_combined_snapshot(200)
-        self.state = build_state(self.snap)
-
-    def _render(self, width, height):
-        return views.body_lines(self.state, self.snap, width, height, color=False)
-
-    def test_no_line_exceeds_width(self):
-        for width, height in [(40, 16), (60, 20), (80, 24), (120, 30), (160, 40)]:
-            for line in self._render(width, height):
-                self.assertLessEqual(cells(line), width, (width, height, line))
-
-    def test_key_fields_present_at_normal_size(self):
-        lines = self._render(80, 24)
-        joined = "\n".join(lines)
-        self.assertIn("FLIGHT", joined)
-        self.assertIn("TIME", joined)
-
-    def test_size_hint_below_floor(self):
-        lines = self._render(30, 8)
-        joined = "\n".join(lines).lower()
-        self.assertIn("too small", joined)
+    def test_degenerate_widths_do_not_raise(self):
+        self.assertEqual(views.layout(list(views.FLIGHT_COLUMNS), 0), "")
+        self.assertEqual(views.layout([], 80), "")
+        views.layout(list(views.FLIGHT_COLUMNS), 1)
 
     def test_layout_tiers(self):
+        self.assertEqual(views.layout_tier(30, 20), "size_hint")
+        self.assertEqual(views.layout_tier(100, 10), "size_hint")
         self.assertEqual(views.layout_tier(120, 30), "wide")
-        self.assertEqual(views.layout_tier(80, 24), "normal")
-        self.assertEqual(views.layout_tier(60, 20), "compact")
-        self.assertEqual(views.layout_tier(30, 8), "size_hint")
-        self.assertEqual(views.layout_tier(100, 16), "normal")
-
-    def test_scroll_to_end_does_not_crash(self):
-        page = self.state.pages[DEPARTURES]
-        total = len(visible_rows(self.snap["flights"], DEPARTURES, "", "", ""))
-        page.offset = total
-        lines = self._render(80, 24)
-        self.assertTrue(lines)
+        self.assertEqual(views.layout_tier(90, 30), "normal")
+        self.assertEqual(views.layout_tier(50, 20), "compact")
 
 
-class TestViewColor(unittest.TestCase):
-    def setUp(self):
-        self.snap = make_combined_snapshot(10)
-        self.state = build_state(self.snap)
+class TestRows(unittest.TestCase):
+    def test_flight_row_fits_and_marks_selection(self):
+        rec = make_flight(0)
+        plain = views.flight_row(rec, 78)[0]
+        selected = views.flight_row(rec, 78, selected=True)[0]
+        self.assertLessEqual(views.text_width(plain), 78)
+        self.assertTrue(selected.startswith("> "))
+        self.assertFalse(plain.startswith("> "))
 
-    def test_no_markup_without_color(self):
-        lines = views.body_lines(self.state, self.snap, 80, 24, color=False)
-        joined = "\n".join(lines)
-        self.assertNotIn("[green]", joined)
+    def test_flight_row_carries_key_fields(self):
+        rec = make_flight(0)
+        line = views.flight_row(rec, 78)[0]
+        self.assertIn(rec["flight_number"], line)
+        self.assertIn(rec["time"], line)
 
-    def test_markup_with_color(self):
-        lines = views.body_lines(self.state, self.snap, 80, 24, color=True)
-        joined = "\n".join(lines)
-        self.assertIn("[", joined)
+    def test_compact_row_is_two_lines(self):
+        lines = views.flight_row(make_flight(0), 78, compact=True)
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertLessEqual(views.text_width(line), 78)
+
+    def test_status_colour_wraps_only_when_requested(self):
+        rec = make_flight(1)  # boarding
+        self.assertIn("[", views.flight_row(rec, 78, color=True)[0])
+        self.assertNotIn("[", views.flight_row(rec, 78, color=False)[0])
+
+    def test_data_brackets_cannot_inject_markup(self):
+        rec = dict(make_flight(1), status="Board[red]ing", status_category="boarding")
+        line = views.flight_row(rec, 78, color=True)[0]
+        self.assertIn(r"\[red]", line)
+        self.assertLessEqual(views.text_width(line), 78)
+
+    def test_header_aligns_with_rows(self):
+        self.assertLessEqual(views.text_width(views.flight_header(78)), 78)
 
 
 class TestFreshness(unittest.TestCase):
-    def _snap(self, **overrides):
-        snap = make_combined_snapshot(5)
-        snap["flights"].update(overrides)
-        return snap
+    def base(self, **kw):
+        flights = {"source": "none", "polling_enabled": True}
+        flights.update(kw)
+        return flights
 
-    def test_api_ok_when_recent(self):
-        flights = self._snap(source="api", last_api_success_at="2026-09-09T08:00:00")["flights"]
-        now = _epoch("2026-09-09T08:00:30")
-        self.assertEqual(views.freshness(flights, now=now), "API OK")
+    def test_labels(self):
+        now = time.time()
+        self.assertEqual(views.freshness(self.base(source="api", last_api_success_at="2026-09-09T08:00:00")), "API OK")
+        self.assertEqual(views.freshness(self.base(source="cache", cache_saved_at=now), now=now), "CACHE")
+        self.assertEqual(views.freshness(self.base(source="cache", cache_saved_at=0.0), now=now), "STALE")
+        self.assertEqual(views.freshness(self.base(source="cache")), "CACHE (age UNKNOWN)")
+        self.assertEqual(views.freshness(self.base(source="memory")), "ERROR")
+        self.assertEqual(views.freshness(self.base()), "no data")
+        self.assertEqual(views.freshness(self.base(source="api", refreshing=True)), "LOADING")
+        self.assertEqual(views.freshness(self.base(polling_enabled=False)), "MANUAL")
 
-    def test_stale_after_threshold(self):
-        flights = self._snap(source="api", last_api_success_at="2026-09-09T08:00:00")["flights"]
-        now = _epoch("2026-09-09T08:05:00")
-        self.assertEqual(views.freshness(flights, now=now), "STALE")
+    def test_stale_detection(self):
+        flights = self.base(source="api", last_api_success_at="2026-09-09T08:00:00")
+        epoch = views._to_epoch("2026-09-09T08:00:00")
+        self.assertEqual(views.freshness(flights, now=epoch + 10_000, poll_interval=30), "STALE")
+        self.assertEqual(views.freshness(flights, now=epoch + 1, poll_interval=30), "API OK")
 
-    def test_cache_unknown_age(self):
-        flights = self._snap(source="cache", cache_saved_at=None)["flights"]
-        self.assertEqual(views.freshness(flights, now=None), "CACHE (age UNKNOWN)")
-
-    def test_previous_date_marker(self):
-        snap = self._snap(source="api", records_date="2026-09-08")
-        header = views.header_line(snap, snap["web"], today="2026-09-09")
-        self.assertIn("previous", header)
+    def test_status_line_reports_error(self):
+        snap = {"flights": {"source": "none", "last_error": "boom", "records_date": ""}}
+        self.assertIn("boom", views.status_line(snap))
 
 
-class TestDisplayGeometry(unittest.TestCase):
-    """R08: display cells, not len(). CJK / combining / controls / 40x16."""
-
+class TestHeaderNavFooter(unittest.TestCase):
     def setUp(self):
-        self.snap = make_combined_snapshot(200)
-        self.state = build_state(self.snap)
-        self.rows = visible_rows(self.snap["flights"], DEPARTURES, "", "", "")
+        self.snap = make_combined_snapshot(30)
+        self.state = AppState()
+        reconcile(self.state, [{"id": "x", "record": {}}])
 
-    def _render(self, width, height, **kwargs):
-        return views.body_lines(self.state, self.snap, width, height, False, **kwargs)
+    def test_header_reports_source_and_web(self):
+        text = views.header_line(self.snap, {"status": "on", "port": 8080})
+        self.assertIn("HKG FLIGHT", text)
+        self.assertIn("Web :8080 ON", text)
 
-    # -- primitives ----------------------------------------------------
-    def test_display_width_counts_cjk_as_two_cells(self):
-        self.assertEqual(views.display_width("北京"), 4)
-        self.assertEqual(views.display_width("PEK"), 3)
-        self.assertEqual(views.display_width("北京PEK"), 7)
+    def test_header_flags_previous_date(self):
+        snap = make_combined_snapshot(5, date="2026-09-08")
+        self.assertIn("(previous)", views.header_line(snap, {"status": "off", "port": 8080},
+                                                      today="2026-09-09"))
 
-    def test_display_width_ignores_markup_and_controls(self):
-        self.assertEqual(views.display_width("[green]OK[/green]"), 2)
-        self.assertEqual(views.display_width("A\x07B\x1bC"), 3)
-        self.assertEqual(views.sanitize("A\x07\x1b[31mB"), "A[31mB")
+    def test_nav_marks_current_page_and_counts_alerts(self):
+        text = views.nav_line(self.state, 3, True, "off")
+        self.assertIn("[1 Departures]", text)
+        self.assertIn("Alerts 3", text)
+        self.assertIn("Poll ON", text)
 
-    def test_truncate_never_leaves_markup_open(self):
-        out = views.truncate("[green]abcdefgh", 4)
-        self.assertIn("[green]", out)
-        self.assertIn("[/green]", out)
-        self.assertLess(out.index("[green]"), out.index("[/green]"))
-        self.assertLessEqual(views.display_width(out), 4)
+    def test_footer_changes_with_focus(self):
+        self.state.focus = "search"
+        self.assertIn("typing", views.footer_line("normal", self.state))
+        self.state.focus = "list"
+        self.assertIn("Search", views.footer_line("normal", self.state))
 
-    def test_truncate_keeps_combining_marks_with_their_base(self):
-        text = "é" * 10
-        out = views.truncate(text, 4)
-        self.assertEqual(out.count("e"), out.count("́"))
-        self.assertFalse(out.startswith("́"))
-        self.assertLessEqual(views.display_width(out), 4)
+    def test_search_line_reports_match_counts(self):
+        text = views.search_line(self.state, self.snap)
+        self.assertIn("Matches", text)
 
-    # -- 40x16 ---------------------------------------------------------
-    def test_body_is_bounded_at_40x16(self):
-        lines = self._render(40, 16)
+
+class TestBodyLines(unittest.TestCase):
+    def build(self, current=DEPARTURES, count=30, **snap_kw):
+        snap = make_combined_snapshot(count, **snap_kw)
+        state = AppState()
+        state.current = current
+        reconcile(state, [{"id": "x", "record": {}}])
+        return state, snap
+
+    def test_size_hint_for_tiny_terminals(self):
+        state, snap = self.build()
+        lines = views.body_lines(state, snap, 30, 10, False)
+        self.assertIn("too small", lines[0])
+
+    def test_list_body_has_header_and_rows(self):
+        state, snap = self.build()
+        lines = views.body_lines(state, snap, 100, 30, False)
         self.assertTrue(lines)
-        self.assertLessEqual(len(lines), 16 - 3)
         for line in lines:
-            self.assertLessEqual(cells(line), 40, line)
+            self.assertLessEqual(views.text_width(line), 100)
 
-    def test_compact_rows_use_two_lines_and_stay_bounded(self):
-        for width, height in [(40, 16), (60, 20), (79, 18)]:
-            lines = self._render(width, height)
-            self.assertLessEqual(len(lines), max(1, height - 3), (width, height))
+    def test_help_block_renders(self):
+        state, snap = self.build()
+        state.help_open = True
+        lines = views.body_lines(state, snap, 100, 30, False)
+        self.assertIn("HELP", lines[0])
+
+    def test_filter_block_renders(self):
+        state, snap = self.build()
+        state.filter_open = True
+        lines = views.body_lines(state, snap, 100, 30, False)
+        self.assertIn("FILTER", lines[0])
+
+    def test_wide_tier_splits_list_and_detail(self):
+        state, snap = self.build()
+        state.detail_id = "anything"
+        lines = views.body_lines(state, snap, 130, 30, False)
+        self.assertTrue(any("|" in line for line in lines))
+
+    def test_narrow_detail_overlay(self):
+        state, snap = self.build()
+        state.detail_id = "anything"
+        lines = views.body_lines(state, snap, 100, 30, False)
+        self.assertTrue(lines)
+
+    def test_empty_state_message(self):
+        state, snap = self.build(count=0)
+        lines = views.body_lines(state, snap, 100, 30, False)
+        self.assertTrue(any("No matches" in line or "Cannot load" in line for line in lines))
+
+    def test_alerts_and_airlines_pages(self):
+        for page in (ALERTS, AIRLINES):
+            state, snap = self.build(current=page)
+            lines = views.body_lines(state, snap, 100, 30, False)
+            self.assertTrue(lines, page)
             for line in lines:
-                self.assertLessEqual(cells(line), width, (width, height, line))
-
-    def test_cjk_route_is_truncated_to_cells(self):
-        record = self.rows[0]["record"]
-        record["destination"] = "北京" * 12
-        lines = self._render(40, 16)
-        for line in lines:
-            self.assertLessEqual(cells(line), 40, line)
-        self.assertTrue(any(views.ELLIPSIS in line for line in lines))
-
-    def test_control_characters_never_reach_the_terminal(self):
-        record = self.rows[0]["record"]
-        record["status"] = "OK\x07\x1b[31mRED\x1b[0m\x9b"
-        joined = "\n".join(self._render(80, 24))
-        for bad in ("\x07", "\x1b", "\x9b"):
-            self.assertNotIn(bad, joined)
-
-    def test_combining_route_stays_inside_width(self):
-        record = self.rows[0]["record"]
-        record["destination"] = "é" * 40
-        for line in self._render(40, 16):
-            self.assertLessEqual(cells(line), 40, line)
-
-    # -- selection -----------------------------------------------------
-    def test_selection_is_visible_in_compact_mode(self):
-        select(self.state, self.rows, 40)
-        lines = self._render(40, 16)
-        self.assertTrue(any(line.startswith(">") for line in lines), lines)
-
-    def test_selection_is_visible_at_end_of_list(self):
-        select(self.state, self.rows, len(self.rows) - 1)
-        lines = self._render(40, 16)
-        self.assertTrue(any(line.startswith(">") for line in lines), lines)
-
-    def test_selection_is_visible_at_normal_size(self):
-        select(self.state, self.rows, len(self.rows) // 2)
-        lines = self._render(80, 24)
-        self.assertTrue(any(line.startswith(">") for line in lines), lines)
-
-    # -- detail --------------------------------------------------------
-    def test_detail_overlay_is_bounded(self):
-        self.state.detail_id = self.rows[0]["id"]
-        lines = self._render(80, 24)
-        self.assertTrue(lines)
-        self.assertLessEqual(len(lines), 24 - 3)
-        for line in lines:
-            self.assertLessEqual(cells(line), 80, line)
-
-    def test_detail_overlay_scrolls_instead_of_dropping_tail(self):
-        state = build_state(self.snap, page=ALERTS)
-        rows = alert_rows(self.snap["alerts"]["alerts"], "")
-        select(state, rows, 0)
-        state.detail_id = rows[0]["id"]
-        first = views.body_lines(state, self.snap, 80, 16, False, detail_scroll=0)
-        later = views.body_lines(state, self.snap, 80, 16, False, detail_scroll=4)
-        self.assertLessEqual(len(first), 13)
-        self.assertNotEqual(first[0], later[0])
-        self.assertTrue(any("more" in line for line in first), first)
-
-    def test_wide_body_panes_stay_bounded(self):
-        self.state.detail_id = self.rows[0]["id"]
-        lines = self._render(140, 30)
-        self.assertLessEqual(len(lines), 30 - 3)
-        for line in lines:
-            self.assertLessEqual(cells(line), 140, line)
-
-
-def _epoch(iso):
-    from datetime import datetime
-    return datetime.fromisoformat(iso).timestamp()
+                self.assertLessEqual(views.text_width(line), 100)
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

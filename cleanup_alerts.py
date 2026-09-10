@@ -22,14 +22,14 @@ def cleanup_alerts(cache_dir=DEFAULT_CACHE_DIR, days_old=7, dry_run=True):
     """
     cache = CacheSystem(cache_dir=cache_dir)
     alerts_data = cache.read_alerts()
-    
-    if not alerts_data:
+
+    if not alerts_data.get("active") and not alerts_data.get("history"):
         print("No alerts data found.")
         return
-    
+
     active = alerts_data.get("active", [])
     history = alerts_data.get("history", [])
-    
+
     # Calculate cutoff date
     cutoff_date = datetime.now() - timedelta(days=days_old)
     cutoff_str = cutoff_date.strftime("%Y-%m-%d")
@@ -128,24 +128,23 @@ def clear_all_alerts(cache_dir=DEFAULT_CACHE_DIR, dry_run=True):
     """
     cache = CacheSystem(cache_dir=cache_dir)
     alerts_data = cache.read_alerts()
-    
-    if not alerts_data:
+
+    if not alerts_data.get("active") and not alerts_data.get("history"):
         print("No alerts data found.")
         return
-    
+
     active = alerts_data.get("active", [])
     history = alerts_data.get("history", [])
-    
+
     print(f"Active alerts: {len(active)}")
     print(f"History alerts: {len(history)}")
     print(f"Dry run: {dry_run}")
     print()
-    
+
     if not dry_run:
         alerts_data["active"] = []
         alerts_data["history"] = []
-        alerts_data["new_flag"] = False
-        
+
         cache.write_alerts(alerts_data)
         print("All alerts cleared!")
     else:

@@ -76,7 +76,7 @@ python -m hkg_flight web -p 9000
 | 选项 | 说明 |
 |------|------|
 | `flight` | 航班号（必填） |
-| `date` | 日期 YYYY-MM-DD（可选，默认搜索 D-1/D/D+1） |
+| `date` | 日期 YYYY-MM-DD（可选，默认今天；22:00–01:59 HKT 跨午夜时含相邻日） |
 | `--codeshare` | 包含代码共享航班 |
 
 **web / tui:**
@@ -262,9 +262,9 @@ options:
 
 ## 系统要求
 
-- **Python**: 3.7 或更高版本（基础包）
+- **Python**: 3.9 或更高版本
 - **依赖**: 基础包无第三方依赖
-- **增强终端界面**: Python 3.9+（项目目标 3.11 / 3.13）+ `.[tui]`
+- **增强终端界面**: `.[tui]` 可选安装组（引入 Textual）
   ```bash
   pip install "hkg-flight-data[tui]"
   ```
