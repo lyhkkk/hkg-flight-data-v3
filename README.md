@@ -87,13 +87,25 @@ python -m hkg_flight clear-cache 2026-08-16
 python -m hkg_flight clear-cache --yes  # Skip confirmation
 ```
 
-Dates use `YYYY-MM-DD` format. If no date is given for `query`, it searches D-1, D, and D+1.
+Dates use `YYYY-MM-DD` format. If no date is given for `query`, it searches today —
+plus the neighbouring day between 22:00–01:59 HKT, so late-night and
+early-morning flights are still found.
 If no date is given for `departures` / `arrivals`, the current date is used.
 
 ### Query output & pagination
 
+Output follows the width of your terminal (the `COLUMNS` variable is honoured),
+and **no line is ever wider than the terminal**, so the shell never wraps a row
+in the middle of a value such as `G30`:
+
+- **80 columns or more** — one row per flight under a column header.
+- **Narrower** (a phone-sized window) — the header is dropped and each flight
+  takes two lines, keeping every field readable instead of squeezing six
+  columns onto one line.
+
 When a query matches an airline code (e.g. `query CX`) or returns more than 10
-flights, results are shown as a compact one-line table with **10 flights per page**:
+flights, results are shown as a paginated table with **10 flights per page**.
+The footer shortens itself to fit narrow terminals:
 
 | Key / Input | Action |
 | --- | --- |

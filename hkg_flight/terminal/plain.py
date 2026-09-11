@@ -12,6 +12,7 @@ so its output is identical with or without a colour-capable terminal.
 import sys
 import time
 
+from ..utils import terminal_width
 from .presenter import (
     FLIGHT_PAGES,
     ALERTS,
@@ -24,7 +25,6 @@ from .presenter import (
 from . import views
 
 DEFAULT_PAGE_SIZE = 20
-DEFAULT_WIDTH = views.DEFAULT_WIDTH
 
 
 def clamp_offset(offset, total, page_size=DEFAULT_PAGE_SIZE):
@@ -79,8 +79,14 @@ def _title(session, page_name, search, count, total=None):
 
 
 def render_block(session, page_name, search, offset, page_size=DEFAULT_PAGE_SIZE,
-                 width=DEFAULT_WIDTH):
-    """Render one page block as plain-text lines."""
+                 width=None):
+    """Render one page block as plain-text lines.
+
+    ``width`` defaults to the real terminal, so a narrow window (a phone
+    terminal) gets the two-line compact row instead of lines that wrap.
+    """
+    width = width or terminal_width()
+    compact = views.is_compact(width)
     snap = session.snapshot()
     lines = [f"HKG | {views.status_line(snap)}"]
     rows = _rows(session, page_name, search)
@@ -92,10 +98,11 @@ def render_block(session, page_name, search, offset, page_size=DEFAULT_PAGE_SIZE
             1 for r in snap["flights"].get("records", [])
             if r.get("type") == ("departure" if page_name == DEPARTURES else "arrival"))
         lines.append(_title(session, page_name, search, len(rows), total))
-        lines.append(views.flight_header(width))
+        if not compact:
+            lines.append(views.flight_header(width))
         lines.append(views.rule(width))
         for row in window:
-            lines.extend(views.flight_row(row["record"], width))
+            lines.extend(views.flight_row(row["record"], width, compact=compact))
     elif page_name == ALERTS:
         lines.append(_title(session, page_name, search, len(rows)))
         lines.append(views.alert_header(width))

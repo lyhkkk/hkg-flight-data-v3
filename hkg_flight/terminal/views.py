@@ -54,8 +54,10 @@ STATUS_COLORS = {
 
 ELLIPSIS = "…"
 
-# Fixed width used by the line-oriented front-ends (plain adapter, CLI tables).
-DEFAULT_WIDTH = 78
+# Below this width a flight row switches to the two-line compact form: the
+# single-line row would squeeze every column, and on a phone-sized terminal it
+# would not fit at all.
+COMPACT_BELOW = 80
 
 # A tag must not be preceded by a backslash, so an escaped "\[" in data is
 # never mistaken for the start of markup.
@@ -220,9 +222,18 @@ def layout_tier(width, height):
         return "size_hint"
     if width >= 120 and height >= 24:
         return "wide"
-    if width >= 80:
+    if width >= COMPACT_BELOW:
         return "normal"
     return "compact"
+
+
+def is_compact(width):
+    """True when a flight row should use the two-line compact form.
+
+    Width-only counterpart of :func:`layout_tier`, for front-ends that have no
+    terminal height (the CLI and the plain adapter).
+    """
+    return width < COMPACT_BELOW
 
 
 # -- status / health -----------------------------------------------------
@@ -390,7 +401,7 @@ def route_short(rec):
 
 def flight_header(width, marker_width=2):
     """Column header aligned with :func:`flight_row`."""
-    return " " * marker_width + layout(list(FLIGHT_COLUMNS), width - marker_width)
+    return truncate(" " * marker_width + layout(list(FLIGHT_COLUMNS), width - marker_width), width)
 
 
 def flight_row(rec, width, color=False, selected=False, compact=False):
@@ -402,11 +413,14 @@ def flight_row(rec, width, color=False, selected=False, compact=False):
     term = rec.get("terminal", "") or "-"
 
     if compact:
-        line1 = marker + layout(
-            [(rec.get("flight_number", ""), 3), (rec.get("time", "--:--"), 2), (status, 4)],
-            width - 2)
-        line2 = "   " + layout(
-            [(route, 3), (gate, 1), ("T" + term, 1)], width - 3)
+        # Same column order as the single-line row, so widening a terminal
+        # never reorders the fields. The terminal already reads "T1", so it is
+        # not prefixed again.
+        line1 = truncate(marker + layout(
+            [(rec.get("time", "--:--"), 2), (rec.get("flight_number", ""), 3), (status, 4)],
+            width - 2), width)
+        line2 = truncate("   " + layout(
+            [(route, 3), (gate, 1), (term, 1)], width - 3), width)
         return [line1, line2]
 
     cells = [
@@ -417,7 +431,7 @@ def flight_row(rec, width, color=False, selected=False, compact=False):
         (gate, 3),
         (term, 1),
     ]
-    return [marker + layout(cells, width - 2)]
+    return [truncate(marker + layout(cells, width - 2), width)]
 
 
 def _short_time(value):
@@ -430,7 +444,7 @@ def _short_time(value):
 
 def alert_header(width, marker_width=2):
     """Column header aligned with :func:`alert_line`."""
-    return " " * marker_width + layout(list(ALERT_COLUMNS), width - marker_width)
+    return truncate(" " * marker_width + layout(list(ALERT_COLUMNS), width - marker_width), width)
 
 
 def alert_line(alert, width, color=False, selected=False):

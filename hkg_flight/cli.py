@@ -22,12 +22,12 @@ from .utils import (
     log,
     normalize_flights,
     sort_flights,
+    terminal_width,
 )
 from .terminal import views
 from .terminal.presenter import detail_lines, sort_alerts
 
 DEFAULT_PAGE_SIZE = 10
-DEFAULT_WIDTH = views.DEFAULT_WIDTH
 
 _HKT = timezone(timedelta(hours=8))
 
@@ -183,12 +183,13 @@ def clear_cache(cache, date_str=None, confirm=False):
 
 # -- rendering -----------------------------------------------------------
 
-def print_flight_details(rec, index=None):
+def print_flight_details(rec, index=None, width=None):
     """Print the labeled detail view for one flight."""
+    width = width or terminal_width()
     header = f"--- Flight #{index} ---" if index is not None else "--- Flight Details ---"
-    print(f"\n{header}")
+    print("\n" + views.truncate(header, width))
     for label, value in detail_lines(rec):
-        print(f"{label}: {value}")
+        print(views.truncate(f"{label}: {value}", width))
 
 
 def _spans_dates(records):
@@ -196,31 +197,41 @@ def _spans_dates(records):
     return len({r.get("date", "") for r in records}) > 1
 
 
-def _print_flight_rows(records, width=DEFAULT_WIDTH, spanning=None):
-    """Column header, rule, then one row per flight.
+def _print_flight_rows(records, width=None, spanning=None):
+    """Rule, then the rows - one line each, or two when the terminal is narrow.
+
+    Nothing printed here is ever wider than ``width``, so the shell cannot wrap
+    a row in the middle of a value. A narrow terminal gets the same two-line
+    compact row the workbench uses, which keeps every column readable instead of
+    squeezing all six onto one line.
 
     When the set spans several days (``query`` looks at two dates across
     midnight) each day gets a dated divider, so the same scheduled time on
     consecutive days cannot read as a duplicated row.
     """
+    width = width or terminal_width()
     if spanning is None:
         spanning = _spans_dates(records)
-    print(views.flight_header(width))
+    compact = views.is_compact(width)
+    if not compact:
+        print(views.flight_header(width))
     print(views.rule(width))
     current = None
     for rec in records:
         if spanning and rec.get("date") != current:
             current = rec.get("date")
             print(views.date_separator(current, width))
-        print(views.flight_row(rec, width)[0])
+        for line in views.flight_row(rec, width, compact=compact):
+            print(line)
 
 
-def _print_table(records, title, width=DEFAULT_WIDTH):
+def _print_table(records, title, width=None):
     """One compact row per flight, using the shared row renderer."""
     if not records:
         print("No flights found.")
         return
-    print(f"\n{title} — {len(records)} flight(s)\n")
+    width = width or terminal_width()
+    print("\n" + views.truncate(f"{title} — {len(records)} flight(s)", width) + "\n")
     _print_flight_rows(records, width)
 
 
@@ -229,8 +240,41 @@ def print_flight_table(records, title):
     _print_table(records, title)
 
 
+# Footers and hints are written as a ladder: the longest form that fits the
+# terminal wins, and a form that would wrap is never used.
+#
+# These strings are printed raw, but measured with ``views.text_width``, which
+# strips rich markup - so a form written with bracket notation such as ``[n]``
+# measures short and would be picked at a width where it does not actually fit.
+# Keep the ladder free of anything that looks like a markup tag.
+_PAGER_FORMS = (
+    "Page {page}/{total} — Enter/N next, P prev, Q quit, or type a page number",
+    "{page}/{total} — n next, p prev, q quit",
+    "{page}/{total}  n/p/q",
+)
+
+_CODESHARE_FORMS = (
+    "Tip: Use --codeshare to include codeshare flights",
+    "--codeshare adds codeshares",
+)
+
+
+def _fits(forms, width, **fields):
+    """The first form that fits ``width``; empty when none does."""
+    for form in forms:
+        text = form.format(**fields)
+        if views.text_width(text) <= width:
+            return text
+    return ""
+
+
+def pager_prompt(page, total_pages, width):
+    """Pager footer for ``width``, or empty when even the shortest will not fit."""
+    return _fits(_PAGER_FORMS, width, page=page, total=total_pages)
+
+
 def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE,
-                     input_func=input, width=DEFAULT_WIDTH):
+                     input_func=input, width=None):
     """Display records in an interactive pager, ``page_size`` rows per page.
 
     Navigation: Enter/``n`` next, ``p`` previous, a number to jump, ``q`` quit.
@@ -240,15 +284,18 @@ def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE,
         print("No flights found.")
         return 0
 
+    width = width or terminal_width()
     total_pages = (total + page_size - 1) // page_size
     spanning = _spans_dates(records)
     page = 1
     while True:
         start = (page - 1) * page_size
         end = min(start + page_size, total)
-        print(f"\n{title} — {total} flight(s), showing {start + 1}-{end}\n")
+        print("\n" + views.truncate(
+            f"{title} — {total} flight(s), showing {start + 1}-{end}", width) + "\n")
         _print_flight_rows(records[start:end], width, spanning=spanning)
-        print(f"\nPage {page}/{total_pages} — [Enter/N]ext [P]rev [Q]uit, or type a page number")
+        prompt = pager_prompt(page, total_pages, width)
+        print(f"\n{prompt}" if prompt else "")
 
         try:
             choice = input_func("> ").strip().lower()
@@ -271,23 +318,26 @@ def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE,
 # -- commands ------------------------------------------------------------
 
 def cmd_query(args, api):
+    width = terminal_width()
     results = search_flights(api, args.flight, args.date, include_codeshare=args.codeshare)
     title = f"Query '{args.flight.upper()}'"
     if args.date:
         title += f" on {args.date}"
 
     if not results:
-        print(f"No flights found for '{args.flight}'")
+        print(views.truncate(f"No flights found for '{args.flight}'", width))
     elif args.details:
         for i, rec in enumerate(results, 1):
-            print_flight_details(rec, i)
+            print_flight_details(rec, i, width)
     elif _is_airline_code(normalize_flight_number(args.flight)) or len(results) > DEFAULT_PAGE_SIZE:
-        paginate_records(results, title, page_size=DEFAULT_PAGE_SIZE)
+        paginate_records(results, title, page_size=DEFAULT_PAGE_SIZE, width=width)
     else:
-        _print_table(results, title)
+        _print_table(results, title, width)
 
     if not args.codeshare:
-        print("\nTip: Use --codeshare to include codeshare flights")
+        tip = _fits(_CODESHARE_FORMS, width)
+        if tip:
+            print(f"\n{tip}")
     return 0
 
 
@@ -303,17 +353,18 @@ def cmd_arrivals(args, api):
     return 0
 
 
-def cmd_alerts(alert_manager):
+def cmd_alerts(alert_manager, width=None):
     """Print gate/stand divergences, using the shared workbench renderer."""
     active = sort_alerts(alert_manager.get_active())
     if not active:
         print("No gate/stand changes.")
         return 0
-    print(f"\nGate/stand changes — {len(active)}\n")
-    print(views.alert_header(DEFAULT_WIDTH))
-    print(views.rule(DEFAULT_WIDTH))
+    width = width or terminal_width()
+    print("\n" + views.truncate(f"Gate/stand changes — {len(active)}", width) + "\n")
+    print(views.alert_header(width))
+    print(views.rule(width))
     for alert in active:
-        print(views.alert_line(alert, DEFAULT_WIDTH))
+        print(views.alert_line(alert, width))
     return 0
 
 

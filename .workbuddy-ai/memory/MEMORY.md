@@ -19,6 +19,16 @@
   成 `G68`；`stand` **自带区域字母**（`W63`/`D201`/`S25`）且只出现在到达 →
   **原样显示，绝不要再补前缀**（曾渲染出 `SW69`、web 端 `Stand W63`）。
 - **ROUTE 列带方向**: `← KIX` 到达 / `→ KIX` 出发。裸机场码在混合列表里有歧义。
+- **输出宽度单一来源**: `utils.terminal_width()`（识别 `COLUMNS`，上限 `MAX_WIDTH=120`，
+  测不到回落 78）。`views` / `cli` / `plain` 共用它，**不要再硬编码宽度**。
+  不变量：**任何渲染行都不超过请求宽度**（`flight_row` / `flight_header` /
+  `alert_header` / `alert_line` / `airline_line` / `_paged` 都必须 `truncate`）。
+  CLI 与 plain 没有终端高度，用 `views.is_compact(width)`（< 80 列为真）决定是否
+  走两行紧凑形态。
+- **陷阱：`views.text_width()` 会剥掉 rich markup。** 凡是用它量宽度、又把字符串
+  原样 `print` 出去的（CLI 梯子文案），**绝不能含 `[...]` 形态的字面量** ——
+  `[n]` 会被当成标签剥掉，宽度低估 9 cells，于是在窄终端上选中放不下的写法而折行。
+  分页脚注 / 提示的阶梯写法保持在 `cli._PAGER_FORMS` / `_CODESHARE_FORMS`。
 - **并发模型**: poller 只有一个写者线程，`_refresh` 串行执行。刷新期间的手动请求
   返回 `already_running`，不排队。**不要重新引入 generation / publish-gate。**
 - **告警语义（2026-09-11 重制）**: 告警 = 偏离**最初分配**。首次分配是基线，不告警；
@@ -39,6 +49,8 @@
   否则测试会变成定时炸弹——`test_search_dates_covers_today_by_default` 就只在白天通过。
 - **写回归测试后反向验证一次**：把 bug 打回去，确认测试确实失败。否则可能只是
   "恰好通过"。
+- **给渲染加"输出 ≤ 请求宽度"的不变量测试**，扫一串宽度（120…1）。这条不变量
+  曾顺带挖出两处别处的同类 bug（见 2026-09-11 第四轮）。
 
 ## 文档约定
 

@@ -76,6 +76,16 @@ class TestLayout(unittest.TestCase):
         self.assertEqual(views.layout_tier(90, 30), "normal")
         self.assertEqual(views.layout_tier(50, 20), "compact")
 
+    def test_compact_agrees_with_the_layout_tier(self):
+        """The CLI has no height, so its width-only test must match the tier."""
+        for width in (40, 45, 79, 80, 90, 130):
+            tier = views.layout_tier(width, 30)
+            self.assertEqual(views.is_compact(width), tier == "compact", width)
+
+    def test_compact_boundary_is_exclusive(self):
+        self.assertFalse(views.is_compact(views.COMPACT_BELOW))
+        self.assertTrue(views.is_compact(views.COMPACT_BELOW - 1))
+
 
 class TestRows(unittest.TestCase):
     def test_flight_row_fits_and_marks_selection(self):
@@ -139,6 +149,43 @@ class TestRows(unittest.TestCase):
         line = views.date_separator("2026-09-11", 78)
         self.assertIn("2026-09-11", line)
         self.assertEqual(views.text_width(line), 78)
+
+    def test_no_row_ever_exceeds_a_phone_width(self):
+        """The whole point of the adaptive width: nothing wraps mid-value.
+
+        On a phone-sized terminal a 78-cell row is wrapped by the shell, which
+        splits values such as ``G30`` into ``G`` and ``30``.
+        """
+        records = [
+            dict(make_flight(0), type="departure", gate="30", destination="NRT"),
+            dict(make_flight(1), type="arrival", stand="W63", origin="SYD"),
+        ]
+        for width in (120, 78, 60, 45, 30, 20, 12, 8, 4, 1):
+            for rec in records:
+                lines = views.flight_row(rec, width, compact=views.is_compact(width))
+                self.assertTrue(lines, width)
+                for line in lines:
+                    self.assertLessEqual(views.text_width(line), width, (width, line))
+            self.assertLessEqual(views.text_width(views.flight_header(width)), width)
+            self.assertLessEqual(views.text_width(views.rule(width)), width)
+            self.assertLessEqual(views.text_width(views.date_separator("2026-09-11", width)), width)
+
+    def test_compact_keeps_the_gate_whole(self):
+        rec = dict(make_flight(0), type="departure", gate="30")
+        lines = views.flight_row(rec, 45, compact=True)
+        self.assertTrue(any("G30" in line for line in lines), lines)
+        self.assertFalse(any(line.strip() == "G" for line in lines), lines)
+
+    def test_compact_preserves_the_column_order_of_the_single_line_row(self):
+        """Widening a terminal must not reorder the fields."""
+        rec = dict(make_flight(0), type="departure", gate="30", destination="NRT")
+        wide = views.flight_row(rec, 100)[0]
+        line1, line2 = views.flight_row(rec, 45, compact=True)
+        for value in (rec["time"], rec["flight_number"], rec["status"]):
+            self.assertIn(value, line1)
+        for value in ("NRT", "G30", rec["terminal"]):
+            self.assertIn(value, line2)
+        self.assertLess(wide.index(rec["flight_number"]), wide.index("NRT"))
 
 
 class TestFreshness(unittest.TestCase):

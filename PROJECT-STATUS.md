@@ -2,7 +2,46 @@
 
 > 最后更新: 2026-09-11
 
-## 项目状态: ✅ 数据身份与渲染已修正，240 项测试 + lint 全绿
+## 项目状态: ✅ 输出宽度自适应，255 项测试 + lint 全绿
+
+## 第三轮修正 — 2026-09-11（手机宽度的 CLI 折行）
+
+### 背景
+
+手机宽度下 `query` 输出会折行，`G30` 被从中间劈成 `G` 和 `30` 落到下一行。
+
+### 根因
+
+CLI 把宽度写死成 `DEFAULT_WIDTH = 78`，完全不看真实终端。78 列的行在 45 列的
+窗口里必然被 shell 折断——折点落在哪一列是随机的，所以表现为「值被劈开」。
+
+### 整改
+
+宽度只有一个来源：`utils.terminal_width()`，识别 `COLUMNS`，上限 `MAX_WIDTH = 120`，
+测不到时回落到 78（管道输出）。`views` / `cli` / `plain` 共用它。
+
+| 宽度 | 形态 |
+|---|---|
+| ≥ 80 列 | 每条航班一行，带列标题 |
+| < 80 列 | 去掉列标题，每条航班两行；字段顺序与单行一致 |
+
+`views.is_compact(width)` 是 `layout_tier` 的「无高度」版本，给 CLI / plain 用。
+标题、分页脚注、`--codeshare` 提示按阶梯降级（最长的能放下就用最长的，都放不下就不输出）。
+
+### 顺带修掉的两个真缺陷
+
+- **阶梯字符串不能含 markup 形态的字面量。** 原来的短格式写作 `[n] [p] [q]`，
+  而 `views.text_width()` 会把 `[n]` 当 rich 标签剥掉——宽度被低估 9 cells，
+  于是在 20 列终端上选中了实际 26 列的写法，照样折行。已改为 `n/p/q`，
+  并加了一条断言：阶梯里每个写法都必须满足 `text_width(s) == len(s)`。
+- **`flight_row` / `flight_header` / `alert_header` 是唯一没做自身截断的渲染器。**
+  极窄宽度（< 2 列）下 marker 自身就超宽。已统一 `truncate` 到请求宽度，
+  与 `alert_line` / `airline_line` / `_paged` 对齐。
+
+### 验证
+
+用真实缓存（2026-09-11，835 条记录）扫描 120/100/80/79/60/45/30/20/12/8/4/1 列，
+**超宽行 0 条**。
 
 ## 第二轮修正 — 2026-09-11（数据身份 + 渲染）
 
@@ -160,7 +199,7 @@
 ```bash
 python -m compileall -q hkg_flight tests cleanup_alerts.py test_hkg_flight.py   # OK
 python -m ruff check .                                                          # All checks passed
-python -m unittest discover -s . -p "test*.py"                                  # 228 tests, OK (skipped=5)
+python -m unittest discover -s . -p "test*.py"                                  # 255 tests, OK (skipped=5)
 ```
 
 本轮另做了 Web 端到端冒烟：起服务器 → `/` 返回仪表盘 → `/api/alerts` 返回
@@ -169,7 +208,8 @@ python -m unittest discover -s . -p "test*.py"                                  
 ## 已知问题
 
 - 增强 UI 需要 `.[tui]`；未安装时相关测试自动跳过，本地无法验证 Textual 交互
-- 40 列紧凑布局的可读性仍需真实终端人工确认
+- 窄终端（< 80 列）的**不折行**已用真实数据全宽度扫描验证；两行紧凑形态的
+  观感仍建议在真机手机上人工看一眼
 - 香港业务日期语义（Asia/Hong_Kong 统一）仍为独立待决项
 - 告警上限 500 条、按当前数据日期清理，`cleanup_alerts.py` 现在只用于手工查看/清空
 

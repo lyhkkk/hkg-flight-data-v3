@@ -183,10 +183,20 @@ a side detail panel; 80–119 columns a single list with an overlay detail; 40�
 columns a two-line compact row; below 40 columns or 16 rows a size hint (with
 state preserved). Selection and viewport scroll are tracked separately.
 
+Every front-end renders at the real terminal width (`utils.terminal_width()`,
+honouring `COLUMNS`, capped at `MAX_WIDTH = 120`; 78 when the size is unknown,
+e.g. piped output). No rendered line is ever wider than that width, so the shell
+can never wrap a row in the middle of a value. The CLI and the plain adapter
+have no terminal height, so they use the width-only counterpart
+`views.is_compact(width)` (true below `views.COMPACT_BELOW = 80`) and take the
+same two-line compact row the workbench uses.
+
 A row's route cell carries its direction — `← KIX` arriving from KIX, `→ KIX`
 departing for KIX — because one flight number can appear in both directions.
 The gate/stand cell shows a departure's gate as `G68` and an arrival's stand
-verbatim as `W63`.
+verbatim as `W63`. The compact row keeps the single-line column order (time,
+flight number, status on line 1; route, gate/stand, terminal on line 2), so
+widening a terminal never reorders the fields.
 
 ### 5.3 Search and filtering
 
@@ -257,6 +267,16 @@ consecutive days cannot read as a duplicated row. A stand or gate query that
 matches nothing falls back to a flight-number match, so an input such as `D7`
 never silently hides a flight. Result sets over 10 rows, and airline-code
 searches, use a 10-row interactive pager.
+
+Table output follows the terminal width (see §5.2). At 80 columns or more a
+flight is one row under a column header; below that the header is dropped and
+each flight takes the two-line compact row, which keeps every field readable
+instead of squeezing six columns into a phone-sized window. Headings, the pager
+footer and the codeshare hint are written as a ladder — the longest form that
+fits the width wins, and a form that would wrap is never used (a footer with
+nothing that fits is omitted entirely). Ladder strings must stay free of
+anything that looks like rich markup (`[n]`), because they are measured with
+`views.text_width()`, which strips markup and would under-count them.
 
 ## 8. File structure
 

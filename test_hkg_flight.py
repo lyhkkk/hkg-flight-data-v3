@@ -19,6 +19,8 @@ from hkg_flight.api import APIClient
 from hkg_flight.cache import CacheSystem
 from hkg_flight.poller import Poller
 from hkg_flight.utils import (
+    DEFAULT_WIDTH,
+    MAX_WIDTH,
     clean_text,
     gate_stand_text,
     make_flight_key,
@@ -27,6 +29,7 @@ from hkg_flight.utils import (
     route_text,
     sort_flights,
     status_category,
+    terminal_width,
     today_str,
     validate_date,
 )
@@ -710,12 +713,19 @@ class TestCLISearch(unittest.TestCase):
 
 class TestCLIRendering(TempCacheCase):
     @staticmethod
-    def _table_output(records, title="Test"):
+    def _table_output(records, title="Test", columns=DEFAULT_WIDTH):
+        """Capture table output with the terminal width pinned.
+
+        ``COLUMNS`` is set explicitly so the assertions do not depend on the
+        window the suite happens to run in.
+        """
         import contextlib
         import io
+        from unittest import mock
 
         buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        env = {"COLUMNS": str(columns)}
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(buf):
             cli.print_flight_table(records, title)
         return buf.getvalue()
 
@@ -740,6 +750,37 @@ class TestCLIRendering(TempCacheCase):
         records = normalize_flights([payload("CX 759", gate="63")])
         self.assertNotIn("-- ", self._table_output(records))
 
+    def test_every_line_fits_the_terminal_at_any_width(self):
+        """A line wider than the terminal is what wraps ``G30`` into ``G`` + ``30``."""
+        from hkg_flight.terminal import views
+        records = normalize_flights([
+            payload("CX 759", gate="30"),
+            payload("UA 862", gate="69"),
+        ])
+        for columns in (120, 100, 78, 60, 45, 30, 20):
+            out = self._table_output(records, columns=columns)
+            for line in out.splitlines():
+                self.assertLessEqual(views.text_width(line), columns, (columns, line))
+
+    def test_a_phone_width_switches_to_the_two_line_row(self):
+        records = normalize_flights([payload("CX 759", gate="30")])
+        narrow = self._table_output(records, columns=45)
+        wide = self._table_output(records, columns=100)
+        # Compact drops the column header and spends two lines on the flight;
+        # the wide form keeps the header and fits the flight on one line.
+        self.assertNotIn("GATE/STAND", narrow)
+        self.assertIn("GATE/STAND", wide)
+        self.assertEqual(len([ln for ln in narrow.splitlines() if "CX759" in ln]), 1)
+        self.assertTrue(any("G30" in ln and "CX759" not in ln for ln in narrow.splitlines()))
+        self.assertTrue(any("G30" in ln and "CX759" in ln for ln in wide.splitlines()))
+
+    def test_the_gate_is_never_split_across_lines(self):
+        records = normalize_flights([payload("CX 759", gate="30")])
+        out = self._table_output(records, columns=45)
+        for line in out.splitlines():
+            self.assertNotEqual(line.strip(), "G", line)
+            self.assertNotEqual(line.strip(), "30", line)
+
     def test_paginate_records_navigation(self):
         records = normalize_flights([payload(f"CX {i}", gate=str(i)) for i in range(25)])
         replies = iter(["n", "p", "2", "q"])
@@ -757,6 +798,65 @@ class TestCLIRendering(TempCacheCase):
             raise EOFError
 
         cli.paginate_records(records, "Test", input_func=raise_eof)
+
+
+class TestAdaptiveWidth(unittest.TestCase):
+    """The CLI renders at the real terminal width so nothing ever wraps."""
+
+    def test_columns_pins_the_width(self):
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"COLUMNS": "45"}):
+            self.assertEqual(terminal_width(), 45)
+
+    def test_width_is_capped_so_rows_stay_readable(self):
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"COLUMNS": "400"}):
+            self.assertEqual(terminal_width(), MAX_WIDTH)
+
+    def test_unusable_columns_falls_back_and_stays_positive(self):
+        from unittest import mock
+        for value in ("0", "-5", "abc", ""):
+            with mock.patch.dict(os.environ, {"COLUMNS": value}):
+                with mock.patch("shutil.get_terminal_size",
+                                return_value=os.terminal_size((0, 0))):
+                    self.assertGreaterEqual(terminal_width(), 1, value)
+
+    def test_pager_prompt_steps_down_a_ladder(self):
+        long_form = cli.pager_prompt(1, 3, 78)
+        self.assertIn("Enter/N", long_form)
+        medium = cli.pager_prompt(1, 3, 40)
+        self.assertNotIn("Enter/N", medium)
+        self.assertIn("next", medium)
+        short = cli.pager_prompt(1, 3, 20)
+        self.assertNotIn("next", short)
+        self.assertIn("1/3", short)
+        self.assertEqual(short, cli.pager_prompt(1, 3, 10))  # 10 cells: exactly fits
+        self.assertEqual(cli.pager_prompt(1, 3, 9), "")
+
+    def test_ladder_forms_contain_nothing_that_looks_like_markup(self):
+        """A literal ``[n]`` is invisible to the width maths, so a form overflows.
+
+        The CLI prints these strings raw but measures them with
+        ``views.text_width``, which strips rich markup. Bracket notation
+        therefore measures short and gets chosen at a width where the form does
+        not actually fit.
+        """
+        from hkg_flight.terminal import views
+        for form in cli._PAGER_FORMS + cli._CODESHARE_FORMS:
+            rendered = form.format(page=1, total=3)
+            self.assertEqual(views.text_width(rendered), len(rendered), rendered)
+
+    def test_pager_prompt_never_wraps(self):
+        from hkg_flight.terminal import views
+        for width in (120, 78, 62, 60, 45, 30, 28, 20, 12, 10):
+            prompt = cli.pager_prompt(2, 7, width)
+            self.assertLessEqual(views.text_width(prompt), width, width)
+
+    def test_codeshare_hint_never_wraps(self):
+        from hkg_flight.terminal import views
+        for width in (120, 78, 60, 49, 45, 30, 27, 20, 10):
+            hint = cli._fits(cli._CODESHARE_FORMS, width)
+            self.assertLessEqual(views.text_width(hint), width, width)
 
 
 class TestClearCache(TempCacheCase):

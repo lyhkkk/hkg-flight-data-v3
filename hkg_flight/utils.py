@@ -11,6 +11,7 @@ markup-like text later on.
 
 from datetime import date, datetime
 import re
+import shutil
 import sys
 
 
@@ -66,6 +67,26 @@ def log(msg):
     """Timestamped stderr log."""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[hkg_flight] {ts} {msg}", file=sys.stderr)
+
+
+# -- terminal ------------------------------------------------------------
+
+# Width used when the terminal size cannot be determined (piped output), and
+# the ceiling for an adaptive one: past this a row is harder to read, not
+# easier.
+DEFAULT_WIDTH = 78
+MAX_WIDTH = 120
+
+
+def terminal_width():
+    """Columns to render at: the real terminal, capped at :data:`MAX_WIDTH`.
+
+    Rendering wider than the terminal makes the shell wrap a row in the middle
+    of a value - on a phone-sized window ``G30`` splits into ``G`` and ``30`` on
+    the next line. ``COLUMNS`` is honoured, so the width can be pinned.
+    """
+    columns = shutil.get_terminal_size(fallback=(DEFAULT_WIDTH, 24)).columns
+    return max(1, min(int(columns), MAX_WIDTH))
 
 
 # -- display text --------------------------------------------------------
