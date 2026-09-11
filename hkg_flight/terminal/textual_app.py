@@ -103,12 +103,17 @@ class FlightBoardApp(App):
         web = self._snap["web"]
         header = self.query_one("#header", Static)
         nav = self.query_one("#nav", Static)
-        header.update(views.header_line(self._snap, web, now=time.time(), today=today_str()))
+        # The widgets run edge to edge (theme.tcss sets no horizontal padding),
+        # so the terminal width is exactly the width available to the text.
+        width = self.size.width
+        header.update(views.header_line(self._snap, web, now=time.time(),
+                                        today=today_str(), width=width))
         nav.update(views.nav_line(
             self.session.state,
             len(self._snap["alerts"]["alerts"]),
             flights.get("polling_enabled", True),
             web["status"],
+            width=width,
         ))
 
     def _refresh_view(self):
@@ -122,7 +127,7 @@ class FlightBoardApp(App):
         tier = views.layout_tier(size.width, size.height)
         lines = views.body_lines(state, self._snap, size.width, size.height, self._color)
         body.update("\n".join(lines))
-        footer.update(views.footer_line(tier, state))
+        footer.update(views.footer_line(tier, state, width=size.width))
 
         if state.focus == "search":
             self._ensure_search_input()
@@ -131,7 +136,7 @@ class FlightBoardApp(App):
         else:
             self._remove_search_input()
             search_label.display = True
-            search_label.update(views.search_line(state, self._snap))
+            search_label.update(views.search_line(state, self._snap, width=size.width))
 
     # -- focus helper -----------------------------------------------------
     def _ensure_search_input(self):
@@ -155,7 +160,8 @@ class FlightBoardApp(App):
         inp.focus()
 
     def _body_height(self):
-        return max(1, self.size.height - 4)
+        """Rows a page-up/page-down jump moves by: the terminal minus the chrome."""
+        return max(1, self.size.height - views.CHROME_ROWS)
 
     # -- actions ----------------------------------------------------------
     def action_page_departures(self):
@@ -256,7 +262,8 @@ class FlightBoardApp(App):
         body = self.query_one("#body", Static)
         size = self.size
         body.update("\n".join(
-            views.body_lines(self.session.state, self._snap, size.width, size.height, self._color)))
+            views.body_lines(self.session.state, self._snap, size.width, size.height,
+                             self._color)))
 
 
 def run_textual(session, color=None):

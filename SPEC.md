@@ -191,6 +191,28 @@ have no terminal height, so they use the width-only counterpart
 `views.is_compact(width)` (true below `views.COMPACT_BELOW = 80`) and take the
 same two-line compact row the workbench uses.
 
+The compact tier drops the column header rather than printing a placeholder: a
+two-line row splits the columns across two lines, so no single header lines up
+with it. The row marker and the route arrow carry the meaning.
+
+Columns are laid out by `views.layout()`, which gives each column a **minimum**
+taken from the shared column table (`FLIGHT_COLUMNS` / `ALERT_COLUMNS`) before
+sharing the remainder out by weight. A proportional split alone starved the
+status column - the longest real status is 26 cells (`At gate 23:47
+(06/09/2026)`) - while `T1` and `05:40` sat on space they could not use. When
+the minimums cannot all fit, they are dropped and the weights alone decide. The
+header and the rows read the same table, so they cannot drift apart; a label is
+never given a minimum of its own, because that would shift every column.
+
+The Textual workbench spends `views.CHROME_ROWS` rows (4) on its own bars -
+header, nav, search row and footer - and the body gets the rest, so the last
+list row is never clipped. Those widgets run edge to edge: `theme.tcss` sets no
+horizontal padding, because the renderer is handed the terminal width and any
+padding would make Textual re-wrap every line at its last word. The gutter lives
+in the renderer instead. The bars are written as ladders (see §7), so the header
+loses its source timestamp before its freshness label, and the footer keeps `q`
+even at 20 columns.
+
 A row's route cell carries its direction — `← KIX` arriving from KIX, `→ KIX`
 departing for KIX — because one flight number can appear in both directions.
 The gate/stand cell shows a departure's gate as `G68` and an arrival's stand
@@ -272,11 +294,12 @@ Table output follows the terminal width (see §5.2). At 80 columns or more a
 flight is one row under a column header; below that the header is dropped and
 each flight takes the two-line compact row, which keeps every field readable
 instead of squeezing six columns into a phone-sized window. Headings, the pager
-footer and the codeshare hint are written as a ladder — the longest form that
-fits the width wins, and a form that would wrap is never used (a footer with
-nothing that fits is omitted entirely). Ladder strings must stay free of
-anything that looks like rich markup (`[n]`), because they are measured with
-`views.text_width()`, which strips markup and would under-count them.
+footer and the codeshare hint are written as a ladder through `views.fit()` -
+the longest form that fits the width wins, and a form that would wrap is never
+used (a footer with nothing that fits is omitted entirely). Ladder strings must
+stay free of anything that looks like rich markup (`[n]`), because they are
+measured with `views.text_width()`, which strips markup and would under-count
+them.
 
 ## 8. File structure
 

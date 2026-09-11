@@ -1,4 +1,15 @@
-/* HKG Flight Data — new TUI theme (Textual) */
+/* HKG Flight Data — new TUI theme (Textual)
+ *
+ * Every full-width widget runs edge to edge with no horizontal padding. The
+ * views render at the terminal width, so a widget's content width must equal
+ * the terminal width too: any padding here makes Textual re-wrap each line at
+ * its last word - which pushed "(12/09/2026)" onto a row of its own. The gutter
+ * lives in the renderer instead: the header, nav and footer start with a space,
+ * and a flight row starts with its two-cell selection marker.
+ *
+ * Each of the four chrome widgets is exactly one row tall. That is what
+ * views.CHROME_ROWS counts; the body gets whatever is left.
+ */
 
 Screen {
     background: #122937;
@@ -9,18 +20,15 @@ Screen {
     background: #0d1f2b;
     color: #e2edf1;
     height: 1;
-    padding: 0 1;
 }
 
 #nav {
     color: #8ec9df;
     height: 1;
-    padding: 0 1;
 }
 
 #search_row {
     height: 1;
-    padding: 0 1;
 }
 
 #search_label {
@@ -41,12 +49,10 @@ Screen {
 
 #body {
     height: 1fr;
-    padding: 0 1;
 }
 
 #footer {
     height: 1;
     color: #8ec9df;
     background: #0d1f2b;
-    padding: 0 1;
 }

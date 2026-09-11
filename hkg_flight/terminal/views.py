@@ -24,6 +24,7 @@ from .presenter import (
     visible_rows, alert_rows, airline_rows, detail_lines, alert_identity,
     alert_change_text,
 )
+from ..utils import terminal_width
 
 PAGE_KEYS = {
     DEPARTURES: "1",
@@ -36,6 +37,13 @@ PAGE_TITLES = {
     ARRIVALS: "Arrivals",
     ALERTS: "Alerts",
     AIRLINES: "Airlines",
+}
+# Used by nav_line when the full titles would wrap.
+PAGE_SHORT = {
+    DEPARTURES: "Dep",
+    ARRIVALS: "Arr",
+    ALERTS: "Alerts",
+    AIRLINES: "Air",
 }
 
 STATUS_COLORS = {
@@ -58,6 +66,12 @@ ELLIPSIS = "…"
 # single-line row would squeeze every column, and on a phone-sized terminal it
 # would not fit at all.
 COMPACT_BELOW = 80
+
+# Screen rows the front-end spends on its own bars rather than on the body:
+# header, nav, search row and footer (see ``theme.tcss``). ``body_lines`` is
+# given the terminal height and must leave these alone, or the body widget
+# clips the last row of the list.
+CHROME_ROWS = 4
 
 # A tag must not be preceded by a backslash, so an escaped "\[" in data is
 # never mistaken for the start of markup.
@@ -130,52 +144,92 @@ def pad(text, width):
     return text + " " * max(0, width - text_width(text))
 
 
-# Column weights shared by the header and every flight row, so the two stay
-# aligned at any width. Weights are relative: the space left after the
-# single-space gaps is shared out proportionally.
+# Columns shared by the header and every flight row, so the two stay aligned at
+# any width. Each entry is ``(label, weight, minimum)``:
+#
+# * ``minimum`` is the natural width of the column's content - the longest value
+#   the API actually produces. A column is given its minimum first, so a
+#   three-cell field such as ``T1`` is never handed twenty cells while the
+#   status column is squeezed into a truncated stub.
+# * ``weight`` shares out whatever is left over, which is what the flexible
+#   columns (route, status) genuinely need.
+#
+# Measured maxima: time 5, flight number 7 (``CX256D``), gate/stand 5 (``D311``),
+# terminal 3 (``T1``), status 26 (``At gate 23:47 (06/09/2026)``).
+#
+# GATE/STAND and TERM are the exceptions: their data needs 5 and 3 cells but
+# their labels need 10 and 4, and a header that shows an ellipsis looks broken.
+# The extra cells are slack the flexible columns would only have spent on
+# trailing whitespace.
 FLIGHT_COLUMNS = (
-    ("TIME", 2),
-    ("FLIGHT", 3),
-    ("ROUTE", 5),
-    ("STATUS", 4),
-    ("GATE/STAND", 3),
-    ("TERM", 1),
+    ("TIME", 2, 5),
+    ("FLIGHT", 3, 7),
+    ("ROUTE", 5, 6),
+    ("STATUS", 4, 26),
+    ("GATE/STAND", 3, 10),
+    ("TERM", 1, 4),
 )
 
 # Alert rows: when the change was seen, which flight, what moved, current status.
 ALERT_COLUMNS = (
-    ("CHANGED", 2),
-    ("FLIGHT", 3),
-    ("CHANGE", 6),
-    ("STATUS", 4),
+    ("CHANGED", 2, 7),
+    ("FLIGHT", 3, 7),
+    ("CHANGE", 6, 12),
+    ("STATUS", 4, 12),
 )
+
+# Single source of truth for a column's weight and minimum, so the header and
+# the rows can never drift apart.
+_FLIGHT_COLUMN = {label: (weight, minimum) for label, weight, minimum in FLIGHT_COLUMNS}
+_ALERT_COLUMN = {label: (weight, minimum) for label, weight, minimum in ALERT_COLUMNS}
+
+
+def _pick(columns, label, value):
+    """One column cell, taking its weight and minimum from a shared table."""
+    weight, minimum = columns[label]
+    return (value, weight, minimum)
 
 
 def layout(cells, width, gap=1):
-    """Lay weighted columns across ``width`` display cells.
+    """Lay columns across ``width`` display cells.
 
-    Space left after the mandatory gaps is shared out by weight (largest
-    remainder). Every cell goes through :func:`pad`, so a row degrades
-    gracefully at 40 cells instead of overflowing the terminal.
+    A cell is ``(text, weight)`` or ``(text, weight, minimum)``. Every column is
+    given its ``minimum`` first and the remainder is shared out by weight
+    (largest remainder). When the minimums cannot all fit - a very narrow
+    terminal - they are dropped and the weights alone decide, so the row degrades
+    to the old proportional split instead of overflowing.
+
+    Every cell goes through :func:`pad`, so the result is exactly ``width`` cells
+    (or shorter when the weights leave nothing to give).
     """
-    cells = [(text, max(0.0, float(weight))) for text, weight in cells]
+    cells = [(cell[0], max(0.0, float(cell[1])),
+              max(0, int(cell[2])) if len(cell) > 2 else 0) for cell in cells]
     count = len(cells)
     if count == 0 or width <= 0:
         return ""
     budget = max(count, width - gap * (count - 1))
-    total = sum(weight for _text, weight in cells)
+    total = sum(weight for _text, weight, _minimum in cells)
+
+    minimums = [minimum for _text, _weight, minimum in cells]
+    if sum(minimums) <= budget:
+        shares = list(minimums)
+        left = budget - sum(shares)
+    else:
+        shares = [0] * count
+        left = budget
 
     if total <= 0:
-        shares = [budget // count] * count
+        extra = [left // count] * count
     else:
-        exact = [budget * weight / total for _text, weight in cells]
-        shares = [int(value) for value in exact]
-        order = sorted(range(count), key=lambda i: exact[i] - shares[i], reverse=True)
-        for index in order[:budget - sum(shares)]:
-            shares[index] += 1
+        exact = [left * weight / total for _text, weight, _minimum in cells]
+        extra = [int(value) for value in exact]
+        order = sorted(range(count), key=lambda i: exact[i] - extra[i], reverse=True)
+        for index in order[:left - sum(extra)]:
+            extra[index] += 1
+    shares = [shares[i] + extra[i] for i in range(count)]
 
     line = (" " * gap).join(
-        pad(text, shares[index]) for index, (text, _weight) in enumerate(cells))
+        pad(text, shares[index]) for index, (text, _weight, _minimum) in enumerate(cells))
     return truncate(line, width)
 
 
@@ -197,15 +251,18 @@ def _paged(lines, available, width, scroll=0):
     return window
 
 
-def _window(rows, page, available, line_cost=1):
-    """Slice of ``rows`` that fits, with the selection kept visible.
+def _window(rows, page, rows_area, line_cost=1):
+    """Slice of ``rows`` that fits in ``rows_area`` display lines.
+
+    ``rows_area`` is the space left for rows alone - the caller has already
+    subtracted its own header and rule.
 
     The offset is derived for rendering only and never written back to state,
     so the selected row can never scroll out of sight.
     """
     if not rows:
         return []
-    capacity = max(1, (max(1, available) - 2) // max(1, line_cost))
+    capacity = max(1, max(1, rows_area) // max(1, line_cost))
     offset = max(0, min(int(getattr(page, "offset", 0) or 0), len(rows) - 1))
     selected = max(0, min(int(getattr(page, "selected_index", 0) or 0), len(rows) - 1))
     if selected < offset:
@@ -303,44 +360,117 @@ def status_line(snap, now=None, poll_interval=30):
     return " | ".join(parts)
 
 
-def header_line(snap, web, now=None, poll_interval=30, today=None):
+def fit(forms, width, **fields):
+    """The first of ``forms`` that fits ``width`` cells; empty when none does.
+
+    Status bars, footers and hints are written as a ladder: the longest form
+    that fits wins, and a form that would wrap is never used. A form that
+    cannot even be formatted is skipped rather than raising.
+
+    Forms must not contain anything that looks like rich markup. They are
+    measured with :func:`text_width`, which strips tags - a literal ``[n]``
+    would measure short and be chosen at a width where it does not fit.
+    """
+    for form in forms:
+        try:
+            text = form.format(**fields)
+        except (KeyError, IndexError, ValueError):
+            continue
+        if text_width(text) <= width:
+            return text
+    return ""
+
+
+def header_line(snap, web, now=None, poll_interval=30, today=None, width=None):
+    """Top status bar: data date, freshness and the web server.
+
+    Built longest-first and cut back to ``width``. The source timestamp is the
+    first thing to go, then the web indicator, then the wordmark; the freshness
+    label and any error are never dropped.
+    """
+    width = terminal_width() if width is None else width
     flights = snap["flights"]
-    source_label, source_time = _health(snap)
+    _source_label, source_time = _health(snap)
     date = flights.get("records_date", "")
     if today is not None and date and date != today:
         date = f"{date} (previous)"
-    text = f" HKG FLIGHT | Data date {date or '—'} | {freshness(flights, now, poll_interval)}"
-    if source_time:
-        text += f" | {source_time}"
-    if flights.get("last_error"):
-        text += " | ERR"
+    fresh = freshness(flights, now, poll_interval)
+    error = "ERR" if flights.get("last_error") else ""
+
     if web["status"] == "on":
-        text += f" | Web :{web['port']} ON"
+        web_text = f"Web :{web['port']} ON"
     elif web["status"] == "error":
-        text += f" | Web ERROR (port {web['port']})"
-    return text
+        web_text = f"Web ERROR (port {web['port']})"
+    else:
+        web_text = ""
+
+    forms = []
+    for wordmark, verbose, with_time, with_web in (
+            ("HKG FLIGHT", True, True, True),
+            ("HKG FLIGHT", True, False, True),
+            ("HKG FLIGHT", True, False, False),
+            ("HKG", True, False, False),
+            ("HKG", False, False, False)):
+        pieces = [wordmark, f"Data date {date or '—'}" if verbose else (date or "—"), fresh]
+        if error:
+            pieces.append(error)
+        if with_time and source_time:
+            pieces.append(source_time)
+        if with_web and web_text:
+            pieces.append(web_text)
+        forms.append(" " + " | ".join(pieces))
+
+    return fit(forms, width) or truncate(forms[-1], width)
 
 
-def nav_line(state, alerts_count, poll_enabled, web_status):
-    parts = []
-    for page in (DEPARTURES, ARRIVALS, ALERTS, AIRLINES):
-        label = PAGE_TITLES[page]
-        if page == ALERTS and alerts_count:
-            label = f"{label} {alerts_count}"
-        marker = "[" if state.current == page else " "
-        close = "]" if state.current == page else ""
-        parts.append(f"{marker}{PAGE_KEYS[page]} {label}{close}")
+def nav_line(state, alerts_count, poll_enabled, web_status, width=None):
+    """Page switcher, shortening its labels before it will wrap."""
+    width = terminal_width() if width is None else width
     poll = "Poll ON" if poll_enabled else "Poll OFF"
-    return " " + "  ".join(parts) + "   " + poll + f"   Web {web_status.upper()}"
+    web = f"Web {web_status.upper()}"
+
+    forms = []
+    for titles, with_state in ((PAGE_TITLES, True), (PAGE_SHORT, True), (PAGE_SHORT, False)):
+        parts = []
+        for page in (DEPARTURES, ARRIVALS, ALERTS, AIRLINES):
+            label = titles[page]
+            if page == ALERTS and alerts_count:
+                label = f"{label} {alerts_count}"
+            marker = "[" if with_state and state.current == page else " "
+            close = "]" if with_state and state.current == page else ""
+            parts.append(f"{marker}{PAGE_KEYS[page]} {label}{close}")
+        body = "  ".join(parts)
+        for tail in (f"   {poll}   {web}", ""):
+            forms.append(" " + body + tail)
+    forms.append(" " + " ".join(f"[{PAGE_KEYS[p]}]" for p in
+                                (DEPARTURES, ARRIVALS, ALERTS, AIRLINES)))
+
+    return fit(forms, width) or truncate(forms[-1], width)
 
 
-def footer_line(tier, state):
+def footer_line(tier, state, width=None):
+    """Key hints, dropping the least useful keys before the line will wrap."""
+    width = terminal_width() if width is None else width
     if state.focus == "search":
-        return " / typing…  Enter submit  Esc cancel  Ctrl+Q quit"
-    return "/ Search  Enter Detail  f Filter  r Refresh  w Web  ? Help  q Quit"
+        forms = (
+            " / typing…  Enter submit  Esc cancel  Ctrl+Q quit",
+            " / typing…  Enter submit  Esc cancel",
+            " / typing…  Enter  Esc",
+        )
+    else:
+        forms = (
+            " / Search  Enter Detail  f Filter  r Refresh  w Web  ? Help  q Quit",
+            " / Search  Enter Detail  f Filter  r Refresh  w Web  ? q",
+            " / Search  Enter Detail  f r w  ? q",
+            " / Search  Enter  f r w  ? q",
+            " / ? q",
+        )
+    return fit(forms, width) or truncate(forms[-1], width)
 
 
-def search_line(state, snap):
+def search_line(state, snap, width=None):
+    """Search/filter state and the match count for the current page."""
+    width = terminal_width() if width is None else width
     page = state.pages[state.current]
     if state.current in FLIGHT_PAGES:
         rows = visible_rows(
@@ -349,19 +479,30 @@ def search_line(state, snap):
             airline=page.airline_filter,
             status=page.status_filter,
         )
-        text = f"Search: {page.search_text or '—'}"
+        filters = []
         if page.airline_filter:
-            text += f"   Airline: {page.airline_filter}"
+            filters.append(f"Airline: {page.airline_filter}")
         if page.status_filter:
-            text += f"   Status: {page.status_filter}"
+            filters.append(f"Status: {page.status_filter}")
         total = sum(1 for r in snap["flights"].get("records", [])
                     if r.get("type") == ("departure" if state.current == DEPARTURES else "arrival"))
-        return f"{text}   Matches {len(rows)} / Total {total}"
+        counts = f"Matches {len(rows)} / Total {total}"
+        # With nothing typed and nothing filtered the counts are the whole
+        # story, and "Search: —" is a label with no value.
+        if page.search_text or filters:
+            text = "Search: " + (page.search_text or "—")
+            if filters:
+                text += "   " + "   ".join(filters)
+            text += f"   {counts}"
+        else:
+            text = counts
+        return truncate(text, width)
     if state.current == ALERTS:
         rows = alert_rows(snap["alerts"]["alerts"], page.search_text)
     else:
         rows = airline_rows(snap["airlines"]["airlines"], page.search_text)
-    return f"Search: {page.search_text or '—'}   Matches {len(rows)}"
+    text = f"Search: {page.search_text or '—'}   Matches {len(rows)}"
+    return truncate(text, width)
 
 
 # -- rows (shared by Textual and plain) ----------------------------------
@@ -400,8 +541,19 @@ def route_short(rec):
 
 
 def flight_header(width, marker_width=2):
-    """Column header aligned with :func:`flight_row`."""
-    return truncate(" " * marker_width + layout(list(FLIGHT_COLUMNS), width - marker_width), width)
+    """Column header aligned with :func:`flight_row`.
+
+    The label is *not* given a minimum of its own: inflating a column so its
+    label fits would shift every column and break the alignment with the rows.
+    The minimums in :data:`FLIGHT_COLUMNS` already allow for the labels.
+    """
+    return truncate(" " * marker_width + layout(list(FLIGHT_COLUMNS), width - marker_width),
+                    width)
+
+
+def _flight_cell(label, value):
+    """One flight column cell, taking its weight and minimum from the table."""
+    return _pick(_FLIGHT_COLUMN, label, value)
 
 
 def flight_row(rec, width, color=False, selected=False, compact=False):
@@ -411,25 +563,33 @@ def flight_row(rec, width, color=False, selected=False, compact=False):
     status = _status_cell(rec, color)
     gate = gate_stand_short(rec)
     term = rec.get("terminal", "") or "-"
+    time_cell = rec.get("time", "--:--")
+    number = rec.get("flight_number", "")
 
     if compact:
-        # Same column order as the single-line row, so widening a terminal
-        # never reorders the fields. The terminal already reads "T1", so it is
-        # not prefixed again.
-        line1 = truncate(marker + layout(
-            [(rec.get("time", "--:--"), 2), (rec.get("flight_number", ""), 3), (status, 4)],
-            width - 2), width)
-        line2 = truncate("   " + layout(
-            [(route, 3), (gate, 1), (term, 1)], width - 3), width)
+        # Same column order as the single-line row, so widening a terminal never
+        # reorders the fields. Splitting the status onto its own line gives it
+        # the whole width it needs instead of fighting time and flight number
+        # for it - the single-line row cannot fit "At gate 23:47 (06/09/2026)".
+        line1 = truncate(marker + layout([
+            _flight_cell("TIME", time_cell),
+            _flight_cell("FLIGHT", number),
+            _flight_cell("STATUS", status),
+        ], width - 2), width)
+        line2 = truncate("   " + layout([
+            _flight_cell("ROUTE", route),
+            _flight_cell("GATE/STAND", gate),
+            _flight_cell("TERM", term),
+        ], width - 3), width)
         return [line1, line2]
 
     cells = [
-        (rec.get("time", "--:--"), 2),
-        (rec.get("flight_number", ""), 3),
-        (route, 5),
-        (status, 4),
-        (gate, 3),
-        (term, 1),
+        _flight_cell("TIME", time_cell),
+        _flight_cell("FLIGHT", number),
+        _flight_cell("ROUTE", route),
+        _flight_cell("STATUS", status),
+        _flight_cell("GATE/STAND", gate),
+        _flight_cell("TERM", term),
     ]
     return [truncate(marker + layout(cells, width - 2), width)]
 
@@ -444,7 +604,8 @@ def _short_time(value):
 
 def alert_header(width, marker_width=2):
     """Column header aligned with :func:`alert_line`."""
-    return truncate(" " * marker_width + layout(list(ALERT_COLUMNS), width - marker_width), width)
+    return truncate(" " * marker_width + layout(list(ALERT_COLUMNS), width - marker_width),
+                    width)
 
 
 def alert_line(alert, width, color=False, selected=False):
@@ -457,10 +618,10 @@ def alert_line(alert, width, color=False, selected=False):
         if col:
             status = f"[{col}]{status}[/{col}]"
     cells = [
-        (_short_time(alert.get("raised_at", "")), 2),
-        (escape_markup(alert.get("flight_number", "?")), 3),
-        (escape_markup(change), 6),
-        (status, 4),
+        _pick(_ALERT_COLUMN, "CHANGED", _short_time(alert.get("raised_at", ""))),
+        _pick(_ALERT_COLUMN, "FLIGHT", escape_markup(alert.get("flight_number", "?"))),
+        _pick(_ALERT_COLUMN, "CHANGE", escape_markup(change)),
+        _pick(_ALERT_COLUMN, "STATUS", status),
     ]
     return truncate(marker + layout(cells, width - 2), width)
 
@@ -571,18 +732,40 @@ def _filter_block(state, available, width):
     ], available, width)
 
 
+def _list_head(state, rows, width, tier):
+    """Title / column header / rule that sit above the rows for a page."""
+    if state.current in FLIGHT_PAGES:
+        # A compact row splits the columns across two lines, so no single
+        # header lines up with it. The CLI drops the header in that case too,
+        # rather than printing a placeholder - the row marker and the route
+        # arrow carry the meaning.
+        head = [] if tier == "compact" else [truncate(flight_header(width), width)]
+        return head + [rule(width)]
+    if state.current == ALERTS:
+        return [
+            truncate(f"GATE/STAND CHANGES ({len(rows)})", width),
+            truncate(alert_header(width), width),
+            rule(width),
+        ]
+    return [truncate(f"AIRLINES ({len(rows)})", width), rule(width)]
+
+
 def body_lines(state, snap, width, height, color, detail_scroll=0):
-    """Render the body area for the current state (list + overlays)."""
+    """Render the body area for the current state (list + overlays).
+
+    ``height`` is the terminal height; :data:`CHROME_ROWS` of it belong to the
+    front-end's own bars, so the lines returned here always fit the body widget.
+    """
     rows = _rows_for(state, snap)
     tier = layout_tier(width, height)
     if tier == "size_hint":
-        return [
+        return [truncate(line, width) for line in (
             f"Terminal too small: {width}x{height} (min 40x16)",
             "Resize to continue; state is preserved.",
             "Press q to quit, ? for help.",
-        ]
+        )]
 
-    available = max(1, height - 3)
+    available = max(1, height - CHROME_ROWS)
     if state.help_open:
         return _help_block(available, width)
     if state.filter_open and state.current in FLIGHT_PAGES:
@@ -596,21 +779,10 @@ def body_lines(state, snap, width, height, color, detail_scroll=0):
 
     page = state.pages[state.current]
     line_cost = 2 if tier == "compact" else 1
-    window = _window(rows, page, available, line_cost)
+    head = _list_head(state, rows, width, tier)
+    window = _window(rows, page, max(1, available - len(head)), line_cost)
 
-    out = []
-    if state.current in FLIGHT_PAGES:
-        header = "COMPACT" if tier == "compact" else flight_header(width)
-        out.append(truncate(header, width))
-        out.append(rule(width))
-    elif state.current == ALERTS:
-        out.append(truncate(f"GATE/STAND CHANGES ({len(rows)})", width))
-        out.append(truncate(alert_header(width), width))
-        out.append(rule(width))
-    else:
-        out.append(truncate(f"AIRLINES ({len(rows)})", width))
-        out.append(rule(width))
-
+    out = list(head)
     for row in window:
         selected = row["id"] == page.selected_id
         if state.current in FLIGHT_PAGES:
@@ -628,7 +800,8 @@ def _wide_body(state, snap, rows, width, available, color, scroll=0):
     page = state.pages[state.current]
     right_width = min(36, max(20, width - 80))
     left_width = width - right_width
-    window = _window(rows, page, available, 1)
+    # The left column carries a header and a rule above its rows.
+    window = _window(rows, page, max(1, available - 2), 1)
 
     if state.current in FLIGHT_PAGES:
         left = [truncate(flight_header(left_width), left_width),

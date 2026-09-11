@@ -259,18 +259,9 @@ _CODESHARE_FORMS = (
 )
 
 
-def _fits(forms, width, **fields):
-    """The first form that fits ``width``; empty when none does."""
-    for form in forms:
-        text = form.format(**fields)
-        if views.text_width(text) <= width:
-            return text
-    return ""
-
-
 def pager_prompt(page, total_pages, width):
     """Pager footer for ``width``, or empty when even the shortest will not fit."""
-    return _fits(_PAGER_FORMS, width, page=page, total=total_pages)
+    return views.fit(_PAGER_FORMS, width, page=page, total=total_pages)
 
 
 def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE,
@@ -335,7 +326,7 @@ def cmd_query(args, api):
         _print_table(results, title, width)
 
     if not args.codeshare:
-        tip = _fits(_CODESHARE_FORMS, width)
+        tip = views.fit(_CODESHARE_FORMS, width)
         if tip:
             print(f"\n{tip}")
     return 0

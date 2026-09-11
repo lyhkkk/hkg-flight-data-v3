@@ -1,10 +1,12 @@
 """View rendering: geometry, markup safety, layout tiers and body composition."""
 
+import os
+import re
 import time
 import unittest
 
 from hkg_flight.terminal import views
-from hkg_flight.terminal.presenter import DEPARTURES, ALERTS, AIRLINES
+from hkg_flight.terminal.presenter import DEPARTURES, ARRIVALS, ALERTS, AIRLINES
 from hkg_flight.terminal.state import AppState, reconcile
 from tests.fixtures.terminal.data import (
     make_combined_snapshot,
@@ -75,6 +77,29 @@ class TestLayout(unittest.TestCase):
         self.assertEqual(views.layout_tier(120, 30), "wide")
         self.assertEqual(views.layout_tier(90, 30), "normal")
         self.assertEqual(views.layout_tier(50, 20), "compact")
+
+    def test_a_column_gets_its_minimum_before_anyone_gets_a_share(self):
+        """A short field must not hoard space the long field needs.
+
+        ``T1`` is three cells. Under a purely proportional split it was handed
+        twenty cells on a phone-width row while the status column was squeezed
+        into a truncated stub.
+        """
+        cells = [("T1", 1, 3), ("At gate 23:47 (06/09/2026)", 4, 26)]
+        line = views.layout(cells, 55)
+        self.assertIn("At gate 23:47 (06/09/2026)", line)
+        self.assertEqual(views.text_width(line), 55)
+
+    def test_minimums_are_dropped_when_they_cannot_all_fit(self):
+        """A 20-column terminal still renders, falling back to the weights."""
+        cells = [("A", 1, 20), ("B", 1, 20)]
+        line = views.layout(cells, 20)
+        self.assertLessEqual(views.text_width(line), 20)
+        self.assertIn("A", line)
+        self.assertIn("B", line)
+
+    def test_a_two_tuple_still_means_weight_only(self):
+        self.assertEqual(views.text_width(views.layout([("ab", 1), ("cd", 1)], 10)), 10)
 
     def test_compact_agrees_with_the_layout_tier(self):
         """The CLI has no height, so its width-only test must match the tier."""
@@ -315,6 +340,201 @@ class TestBodyLines(unittest.TestCase):
             self.assertTrue(lines, page)
             for line in lines:
                 self.assertLessEqual(views.text_width(line), 130)
+
+
+class TestColumnWidths(unittest.TestCase):
+    """Real API values must survive the columns they are given."""
+
+    # The longest status the HKIA feed produces, measured over 7 days of cache.
+    LONGEST_STATUS = "At gate 23:47 (06/09/2026)"
+
+    def rec(self, **kw):
+        rec = {"time": "15:45", "flight_number": "CX256D", "type": "arrival",
+               "stand": "W63", "terminal": "T1", "origin": "LHR",
+               "status": self.LONGEST_STATUS, "status_category": "at_gate"}
+        rec.update(kw)
+        return rec
+
+    def test_the_longest_real_status_survives_a_phone_width(self):
+        # It used to be cut to "At gate 23:47 (06/09/2…" even at 100 columns:
+        # the proportional weights starved STATUS while TIME and TERM sat on
+        # space they could not use.
+        for width in (48, 55, 60, 78, 100, 120):
+            lines = views.flight_row(self.rec(), width, compact=views.is_compact(width))
+            self.assertIn(self.LONGEST_STATUS, "\n".join(lines), width)
+
+    def test_every_row_fills_exactly_the_requested_width(self):
+        for width in (40, 55, 80, 120):
+            for line in views.flight_row(self.rec(), width, compact=views.is_compact(width)):
+                self.assertEqual(views.text_width(line), width, width)
+
+    def test_header_columns_line_up_with_the_values(self):
+        """The header and the rows share one column table, so they cannot drift."""
+        rec = self.rec(time="11:11", flight_number="AA111", origin="BBB",
+                       stand="G12", terminal="T9", status="Ssss")
+        width = 100
+        header = views.flight_header(width)
+        row = views.flight_row(rec, width)[0]
+        for label, value in (("TIME", "11:11"), ("FLIGHT", "AA111"), ("ROUTE", "← BBB"),
+                             ("STATUS", "Ssss"), ("GATE/STAND", "G12"), ("TERM", "T9")):
+            self.assertEqual(header.index(label), row.index(value), label)
+
+    def test_a_header_label_is_never_truncated_away(self):
+        """Every label fits the column, so the header never shows an ellipsis.
+
+        The header only appears at ``COMPACT_BELOW`` and above (and in the wide
+        split, whose list column is narrower than the terminal).
+        """
+        for width in (views.COMPACT_BELOW, 84, 100, 120):
+            header = views.flight_header(width)
+            self.assertNotIn(views.ELLIPSIS, header, width)
+            for label in ("TIME", "FLIGHT", "ROUTE", "STATUS", "GATE/STAND", "TERM"):
+                self.assertIn(label, header, (width, label))
+
+    def test_the_alert_header_labels_all_fit(self):
+        for width in (views.COMPACT_BELOW, 100, 120):
+            header = views.alert_header(width)
+            for label in ("CHANGED", "FLIGHT", "CHANGE", "STATUS"):
+                self.assertIn(label, header, (width, label))
+
+
+class TestWidgetsFitTheTerminal(unittest.TestCase):
+    """Nothing the front-end hands to a widget may exceed its width.
+
+    Textual wraps at the last word, so a line one cell too wide does not clip -
+    it moves a whole value onto the next row. That is how "(12/09/2026)" ended
+    up on a line of its own.
+    """
+
+    def build(self, current=DEPARTURES):
+        snap = make_combined_snapshot(30)
+        state = AppState()
+        state.current = current
+        reconcile(state, [{"id": "x", "record": {}}])
+        return state, snap
+
+    def widgets(self, state, snap, width, height):
+        yield "header", views.header_line(snap, snap["web"], width=width)
+        yield "nav", views.nav_line(state, 12, True, "off", width=width)
+        yield "search", views.search_line(state, snap, width=width)
+        yield "footer", views.footer_line(views.layout_tier(width, height), state, width=width)
+        for index, line in enumerate(views.body_lines(state, snap, width, height, False)):
+            yield f"body[{index}]", line
+
+    def test_nothing_exceeds_a_phone_width(self):
+        for width in (120, 100, 80, 79, 60, 55, 45, 30, 20):
+            for page in (DEPARTURES, ARRIVALS, ALERTS, AIRLINES):
+                state, snap = self.build(page)
+                for name, line in self.widgets(state, snap, width, 30):
+                    self.assertLessEqual(views.text_width(line), width,
+                                         (width, page, name, line))
+
+    def test_the_body_never_returns_more_lines_than_it_has(self):
+        # Both tiers: the compact tier floors its row count, which can hide an
+        # off-by-one in the chrome reserve, so the single-line tier must be
+        # checked too (that is where ``height - 3`` overflowed by one row).
+        for width in (55, 100):
+            for height in (16, 20, 24, 30, 40):
+                for page in (DEPARTURES, ARRIVALS, ALERTS, AIRLINES):
+                    state, snap = self.build(page)
+                    lines = views.body_lines(state, snap, width, height, False)
+                    self.assertLessEqual(len(lines), max(1, height - views.CHROME_ROWS),
+                                         (width, height, page, len(lines)))
+
+    def test_bars_measure_the_same_as_their_length(self):
+        """A bar containing something tag-shaped would measure short and wrap.
+
+        ``text_width`` strips rich markup; these strings are printed raw.
+        """
+        for width in range(10, 80):
+            for page in (DEPARTURES, ALERTS):
+                state, snap = self.build(page)
+                for name, line in self.widgets(state, snap, width, 30):
+                    if name == "body[0]" or name.startswith("body"):
+                        continue
+                    self.assertEqual(views.text_width(line), len(line), (width, name, line))
+
+    def test_the_compact_list_has_no_placeholder_header(self):
+        state, snap = self.build()
+        narrow = "\n".join(views.body_lines(state, snap, 55, 30, False))
+        self.assertNotIn("COMPACT", narrow)
+        self.assertNotIn("COMPACT", "\n".join(views.body_lines(state, snap, 45, 30, False)))
+        # The wide tier still carries a real column header.
+        self.assertIn("FLIGHT", "\n".join(views.body_lines(state, snap, 100, 30, False)))
+
+    def test_the_nav_falls_back_to_short_labels(self):
+        state, snap = self.build()
+        wide = views.nav_line(state, 0, True, "off", width=120)
+        self.assertIn("Departures", wide)
+        narrow = views.nav_line(state, 99, True, "off", width=45)
+        self.assertLessEqual(views.text_width(narrow), 45)
+        self.assertIn("Dep", narrow)
+        self.assertNotIn("Departures", narrow)
+
+    def test_the_footer_keeps_quit_on_a_phone(self):
+        state = AppState()
+        for width in (20, 30, 45, 55, 80, 120):
+            footer = views.footer_line("compact", state, width=width)
+            self.assertLessEqual(views.text_width(footer), width, width)
+            self.assertIn("q", footer, width)
+
+    def test_search_line_drops_the_empty_label(self):
+        state, snap = self.build()
+        # make_combined_snapshot(30) alternates directions, so 15 are departures.
+        self.assertEqual(views.search_line(state, snap, width=78), "Matches 15 / Total 15")
+        state.pages[DEPARTURES].search_text = "CX"
+        self.assertIn("Search: CX", views.search_line(state, snap, width=78))
+
+
+class TestFitLadder(unittest.TestCase):
+    def test_picks_the_longest_form_that_fits(self):
+        forms = ("abcdefgh", "abcd", "ab")
+        self.assertEqual(views.fit(forms, 8), "abcdefgh")
+        self.assertEqual(views.fit(forms, 7), "abcd")
+        self.assertEqual(views.fit(forms, 2), "ab")
+        self.assertEqual(views.fit(forms, 1), "")
+
+    def test_an_unformattable_form_is_skipped(self):
+        self.assertEqual(views.fit(("{missing}", "ok"), 10), "ok")
+
+
+class TestThemeMatchesTheRenderer(unittest.TestCase):
+    """theme.tcss and views must agree on how much room each widget has.
+
+    The renderer is handed the terminal width, so a widget's content width has
+    to equal the terminal width: any horizontal padding makes Textual re-wrap
+    every line at its last word.
+    """
+
+    CHROME = ("#header", "#nav", "#search_row", "#footer")
+    FULL_WIDTH = CHROME + ("#body",)
+
+    @classmethod
+    def setUpClass(cls):
+        path = os.path.join(os.path.dirname(views.__file__), "theme.tcss")
+        with open(path, encoding="utf-8") as handle:
+            cls.css = handle.read()
+
+    def block(self, selector):
+        match = re.search(re.escape(selector) + r"\s*\{(.*?)\}", self.css, re.S)
+        self.assertIsNotNone(match, selector)
+        return match.group(1)
+
+    def test_no_full_width_widget_pads_horizontally(self):
+        for selector in self.FULL_WIDTH:
+            for declaration in re.findall(r"padding:\s*([^;]+);", self.block(selector)):
+                self.assertEqual([part.strip() for part in declaration.split()], ["0", "0"],
+                                 f"{selector} padding {declaration!r} narrows the content width")
+
+    def test_each_chrome_widget_is_one_row(self):
+        for selector in self.CHROME:
+            self.assertRegex(self.block(selector), r"height:\s*1\s*;", selector)
+
+    def test_the_body_takes_the_remaining_rows(self):
+        self.assertRegex(self.block("#body"), r"height:\s*1fr\s*;")
+
+    def test_the_chrome_row_count_matches_views(self):
+        self.assertEqual(len(self.CHROME), views.CHROME_ROWS)
 
 
 if __name__ == "__main__":

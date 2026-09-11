@@ -2,7 +2,67 @@
 
 > 最后更新: 2026-09-11
 
-## 项目状态: ✅ 输出宽度自适应，255 项测试 + lint 全绿
+## 项目状态: ✅ TUI 宽度与列宽修正，276 项测试 + lint 全绿
+
+## 第四轮修正 — 2026-09-12（TUI 折行）
+
+用户贴了手机上的 TUI 截图。表面症状是状态串里的 `(12/09/2026)` 独占一行、被
+截成 `(12/09/20…`。查下来是**四个独立缺陷**。
+
+### 缺陷一（核心）：渲染宽度 ≠ widget 内容宽
+
+`theme.tcss` 里 `#header/#nav/#search_row/#body/#footer` 都是 `padding: 0 1`，
+widget 内容宽 = `size.width - 2`；而 `body_lines` 是按 `size.width` 渲染的。
+实测 **25/26 行正好顶满 `width`**，Textual 于是按词重新折行——它不会裁掉溢出
+的 2 格，而是把**整个最后一个词**推到下一行。所以 `At gate 23:47 (12/09/2026)`
+的日期部分被整块挤了下去。
+
+修复：**去掉所有横向 padding**，让「渲染宽度 = 终端宽度」成为唯一来源，gutter
+改由渲染层提供（header/nav/footer 自带前导空格，航班行自带两格选择标记）。
+不这么做的话，CSS 的 padding 与 Python 里的宽度常量要永远手工同步。
+
+### 缺陷二：顶栏/导航/底栏根本不看宽度
+
+| 行 | 修复前 | 手机 55 列下 |
+|---|---|---|
+| header | 65 | 折行，出现孤立的 `\|` |
+| nav | 74 | 折行，`Poll ON / Web OFF` 被挤到第二行 |
+| footer | 66 | 折行，`q Quit` 掉出屏幕 |
+
+修复：三条都加 `width` 参数与阶梯写法（`views.fit`）。header 先丢源时间戳、
+再丢 Web 指示、再丢字标；footer 保住 `q`；nav 退回短标签 `Dep/Arr/Alerts/Air`。
+`cli._fits` 与它重复，已删掉，统一用 `views.fit`。
+
+### 缺陷三：状态列被饿死，短字段却浪费空间
+
+`layout` 是纯比例权重：55 列下 TIME 分到 11 格（只需 5）、TERM 分到 8 格
+（只需 3），而 STATUS 只有 22 格却要放 **26 字符**的真实最长状态
+`At gate 23:47 (06/09/2026)`。100 列下更糟——宽屏走 6 列布局，status 权重
+4/18，反而更窄，**终端越宽状态越看不清**。
+
+修复：列定义升级为 `(label, weight, minimum)`，每列先拿最小宽度（取自实测
+最大值），余量再按权重分；放不下时退回纯权重。表头与数据行读同一张表，不会漂移。
+**表头标签不给自己的最小宽度**——那会让所有列错位（`GATE/STAND` 要 10 格而数据
+只要 5 格，所以把 10 写进列定义，让表头永远不出现省略号）。
+
+### 缺陷四：body 高度多算 1 行
+
+`available = height - 3`，但 `#body` 实际是 `height - 4`（4 个 chrome widget）。
+单行档下永远多出 1 行被裁；header/nav 折行时 chrome 变 6 行，裁得更多
+（截图里 `7C6014` 丢了第二行）。修复：引入 `views.CHROME_ROWS = 4`，
+`textual_app._body_height()` 也改用它，并用测试解析 `theme.tcss` 锁住这个数。
+
+### 顺带
+
+- 紧凑档不再显示 `COMPACT` 占位表头（与 CLI 一致，两行行没有能对齐的表头）
+- 空搜索时不再显示 `Search: —`，只留 `Matches 406 / Total 406`
+- size-hint 文案是唯一没做自身截断的渲染器，已统一 `truncate`
+- 新增 `TERM` / `GATE/STAND` 列最小宽度，保证表头永不出现省略号
+
+### 结果
+
+手机 55×30 下：chrome 从 6 行降到 4 行，可视航班 8 → 12 条，26 字符状态从
+48 列起就完整显示（修复前 100 列都放不下）。测试 255 → **276 全绿**（+21）。
 
 ## 第三轮修正 — 2026-09-11（手机宽度的 CLI 折行）
 
@@ -199,7 +259,7 @@ CLI 把宽度写死成 `DEFAULT_WIDTH = 78`，完全不看真实终端。78 列�
 ```bash
 python -m compileall -q hkg_flight tests cleanup_alerts.py test_hkg_flight.py   # OK
 python -m ruff check .                                                          # All checks passed
-python -m unittest discover -s . -p "test*.py"                                  # 255 tests, OK (skipped=5)
+python -m unittest discover -s . -p "test*.py"                                  # 276 tests, OK (skipped=5)
 ```
 
 本轮另做了 Web 端到端冒烟：起服务器 → `/` 返回仪表盘 → `/api/alerts` 返回
@@ -207,9 +267,9 @@ python -m unittest discover -s . -p "test*.py"                                  
 
 ## 已知问题
 
-- 增强 UI 需要 `.[tui]`；未安装时相关测试自动跳过，本地无法验证 Textual 交互
-- 窄终端（< 80 列）的**不折行**已用真实数据全宽度扫描验证；两行紧凑形态的
-  观感仍建议在真机手机上人工看一眼
+- 增强 UI 需要 `.[tui]`；**本机未安装 Textual，TUI 的渲染只能离线验证**
+  （逐行量宽度 + 解析 `theme.tcss`），折行行为本身无法在此复现
+- 窄终端的**不折行**已用真实数据全宽度扫描验证；观感仍建议在真机手机上人工看一眼
 - 香港业务日期语义（Asia/Hong_Kong 统一）仍为独立待决项
 - 告警上限 500 条、按当前数据日期清理，`cleanup_alerts.py` 现在只用于手工查看/清空
 

@@ -855,7 +855,7 @@ class TestAdaptiveWidth(unittest.TestCase):
     def test_codeshare_hint_never_wraps(self):
         from hkg_flight.terminal import views
         for width in (120, 78, 60, 49, 45, 30, 27, 20, 10):
-            hint = cli._fits(cli._CODESHARE_FORMS, width)
+            hint = views.fit(cli._CODESHARE_FORMS, width)
             self.assertLessEqual(views.text_width(hint), width, width)
 
 
