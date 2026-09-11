@@ -112,6 +112,34 @@ class TestRows(unittest.TestCase):
     def test_header_aligns_with_rows(self):
         self.assertLessEqual(views.text_width(views.flight_header(78)), 78)
 
+    def test_stand_is_shown_verbatim(self):
+        # HKIA stands already carry their letter (W63, D201); an extra "S" made
+        # the cell read "SW63".
+        rec = dict(make_flight(1), type="arrival", stand="W63")
+        self.assertEqual(views.gate_stand_short(rec), "W63")
+        line = views.flight_row(rec, 78)[0]
+        self.assertIn("W63", line)
+        self.assertNotIn("SW63", line)
+
+    def test_gate_gains_its_letter_because_the_api_sends_a_bare_number(self):
+        rec = dict(make_flight(0), type="departure", gate="68")
+        self.assertEqual(views.gate_stand_short(rec), "G68")
+
+    def test_missing_position_renders_as_dashes(self):
+        self.assertEqual(views.gate_stand_short({"type": "arrival"}), "--")
+        self.assertEqual(views.gate_stand_short({"type": "departure"}), "--")
+
+    def test_route_cell_marks_the_direction(self):
+        dep = dict(make_flight(0), type="departure", destination="NRT")
+        arr = dict(make_flight(1), type="arrival", origin="SYD")
+        self.assertEqual(views.route_short(dep), "→ NRT")
+        self.assertEqual(views.route_short(arr), "← SYD")
+
+    def test_date_separator_names_the_day_and_fills_the_width(self):
+        line = views.date_separator("2026-09-11", 78)
+        self.assertIn("2026-09-11", line)
+        self.assertEqual(views.text_width(line), 78)
+
 
 class TestFreshness(unittest.TestCase):
     def base(self, **kw):

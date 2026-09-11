@@ -11,7 +11,7 @@ import shutil
 import tempfile
 import time
 import unittest
-from datetime import date
+from datetime import date, datetime
 
 from hkg_flight import cli
 from hkg_flight.alerts import AlertManager
@@ -105,7 +105,16 @@ class TestUtils(unittest.TestCase):
         self.assertEqual(normalize_flight_number(None), "")
 
     def test_make_flight_key(self):
-        self.assertEqual(make_flight_key("2026-09-11", "cx 759"), "2026-09-11_CX759")
+        self.assertEqual(
+            make_flight_key("2026-09-11", "cx 759", "departure"), "2026-09-11_DEP_CX759")
+        self.assertEqual(
+            make_flight_key("2026-09-11", "cx 759", "arrival"), "2026-09-11_ARR_CX759")
+
+    def test_flight_key_separates_the_two_directions(self):
+        # One number can arrive and depart on the same day; they are two flights.
+        self.assertNotEqual(
+            make_flight_key("2026-09-11", "UA820", "arrival"),
+            make_flight_key("2026-09-11", "UA820", "departure"))
 
     def test_route_text(self):
         self.assertEqual(route_text({"type": "departure", "destination": "NRT"}), "HKG -> NRT")
@@ -198,7 +207,7 @@ class TestNormalizeFlights(unittest.TestCase):
         self.assertEqual(rec["airline_code"], "CX")
         self.assertEqual(rec["gate"], "63")
         self.assertEqual(rec["type"], "departure")
-        self.assertEqual(rec["key"], f"{TODAY}_CX759")
+        self.assertEqual(rec["key"], f"{TODAY}_DEP_CX759")
         self.assertEqual(rec["status_category"], "scheduled")
 
     def test_cargo_is_skipped(self):
@@ -261,7 +270,7 @@ class TestAlertManager(TempCacheCase):
 
     @staticmethod
     def flight(gate="62", stand="", status="Scheduled"):
-        return {"key": f"{TODAY}_CX759", "flight_number": "CX759", "date": TODAY,
+        return {"key": f"{TODAY}_DEP_CX759", "flight_number": "CX759", "date": TODAY,
                 "time": "08:40", "type": "departure", "gate": gate, "stand": stand,
                 "status": status}
 
@@ -339,7 +348,7 @@ class TestAlertManager(TempCacheCase):
         for i in range(600):
             old = self.flight(gate="1")
             new = self.flight(gate="2")
-            old["key"] = new["key"] = f"{TODAY}_CX{i}"
+            old["key"] = new["key"] = f"{TODAY}_DEP_CX{i}"
             self.alerts.process_flight(old, new)
         self.assertLessEqual(self.alerts.active_count(), 500)
 
@@ -460,6 +469,28 @@ class TestPoller(TempCacheCase):
         poller.refresh_today()
         active = poller.alert_manager.get_active()
         self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["new_value"], "63")
+
+    def test_an_arrival_landing_does_not_clear_its_departure(self):
+        # UA820 arrives from LAX and departs for BKK on the same day. The two
+        # share a number; only the direction tells them apart, so the arrival
+        # landing must not sweep away the departure's gate alert.
+        poller, api = self.make([
+            payload("UA 820", gate="62", destination=["BKK"]),
+            payload("UA 820", arrival=True, stand="W63", origin=["LAX"]),
+        ])
+        poller.refresh_today()
+
+        api.data = [
+            payload("UA 820", gate="63", destination=["BKK"]),
+            payload("UA 820", arrival=True, stand="W63", origin=["LAX"],
+                    status="Landed"),
+        ]
+        poller.refresh_today()
+
+        active = poller.alert_manager.get_active()
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["type"], "departure")
         self.assertEqual(active[0]["new_value"], "63")
 
     def test_failed_api_falls_back_to_cache(self):
@@ -643,6 +674,16 @@ class TestCLISearch(unittest.TestCase):
         api = self.api([payload("CX759")])
         self.assertEqual(cli.search_flights(api, "ZZ999", TODAY), [])
 
+    def test_one_number_arriving_and_departing_is_not_deduplicated(self):
+        # Real HKIA turnaround flights: UA820 lands from LAX and leaves for BKK
+        # on the same day. They share a number but are two flights.
+        api = self.api([
+            payload("UA 820", arrival=True, stand="W63", origin=["LAX"]),
+            payload("UA 820", gate="63", destination=["BKK"]),
+        ])
+        results = cli.search_flights(api, "UA820", TODAY)
+        self.assertEqual([r["type"] for r in results], ["arrival", "departure"])
+
     def test_flights_for_date_filters_direction(self):
         api = self.api([payload("CX 759"), payload("CX 100", arrival=True)])
         self.assertEqual(len(cli.flights_for_date(api, TODAY, "departure")), 1)
@@ -656,21 +697,48 @@ class TestCLISearch(unittest.TestCase):
         self.assertEqual(cli._search_dates("2026-09-11"), ["2026-09-11"])
 
     def test_search_dates_covers_today_by_default(self):
-        self.assertEqual(cli._search_dates(None), [TODAY])
+        noon = datetime(2026, 9, 11, 12, 0, tzinfo=cli._HKT)
+        self.assertEqual(cli._search_dates(None, noon), ["2026-09-11"])
+
+    def test_search_dates_spans_midnight(self):
+        # A query at 23:30 must still find the 00:05 departure tomorrow.
+        late = datetime(2026, 9, 11, 23, 30, tzinfo=cli._HKT)
+        self.assertEqual(cli._search_dates(None, late), ["2026-09-11", "2026-09-12"])
+        early = datetime(2026, 9, 12, 1, 0, tzinfo=cli._HKT)
+        self.assertEqual(cli._search_dates(None, early), ["2026-09-11", "2026-09-12"])
 
 
 class TestCLIRendering(TempCacheCase):
-    def test_table_output_is_one_row_per_flight(self):
+    @staticmethod
+    def _table_output(records, title="Test"):
         import contextlib
         import io
 
-        records = normalize_flights([payload("CX 759", gate="63"), payload("UO 612")])
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            cli.print_flight_table(records, "Test")
-        lines = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+            cli.print_flight_table(records, title)
+        return buf.getvalue()
+
+    def test_table_output_is_one_row_per_flight(self):
+        records = normalize_flights([payload("CX 759", gate="63"), payload("UO 612")])
+        lines = [ln for ln in self._table_output(records).splitlines() if ln.strip()]
         data_rows = [ln for ln in lines if "CX759" in ln or "UO612" in ln]
         self.assertEqual(len(data_rows), 2)
+
+    def test_table_divides_the_days_when_the_set_spans_more_than_one(self):
+        # `query` looks at two dates across midnight; without a divider the same
+        # scheduled time on consecutive days reads as a duplicated row.
+        records = normalize_flights([
+            payload("CX 759", gate="63", date_str="2026-09-11"),
+            payload("CX 759", gate="64", date_str="2026-09-12"),
+        ])
+        out = self._table_output(records)
+        self.assertIn("-- 2026-09-11 ", out)
+        self.assertIn("-- 2026-09-12 ", out)
+
+    def test_no_date_divider_when_everything_is_one_day(self):
+        records = normalize_flights([payload("CX 759", gate="63")])
+        self.assertNotIn("-- ", self._table_output(records))
 
     def test_paginate_records_navigation(self):
         records = normalize_flights([payload(f"CX {i}", gate=str(i)) for i in range(25)])

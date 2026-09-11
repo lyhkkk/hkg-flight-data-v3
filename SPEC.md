@@ -71,6 +71,11 @@ Each flight object:
 - `origin` / `destination` (array of IATA codes)
 - `terminal`, `gate`, `aisle`, `hall`, `baggage`, `stand` (strings, may be null)
 
+`gate` is a bare number (`"68"`) and only ever appears on departures. `stand`
+already carries its zone letter (`"W69"`, `"D201"`, `"S25"`) and only ever
+appears on arrivals. Renderers therefore prefix a gate with `G` but show a
+stand verbatim.
+
 Real payloads carry the full IATA number in `no` (`{"airline": "CKS", "no":
 "K4 701"}`), where `airline` is the 3-letter ICAO code. A numeric-only `no` is
 completed with a 2-letter airline code so `query CX759` works either way.
@@ -101,11 +106,15 @@ stat is unavailable.
 
 ### 4.2 Change detection
 
-Flights are tracked per `{date}_{flight_number}` key. An alert marks a flight
-whose **gate** or **stand** has moved away from the value it was originally
-assigned. The first allocation is the baseline, not news — every flight gets a
-gate, so alerting on it would produce hundreds of rows a day. Only a later
-divergence alerts:
+Flights are tracked per `{date}_{ARR|DEP}_{flight_number}` key. The direction is
+part of the identity: HKIA schedules turnaround flights where one number
+arrives and departs on the same day (`UA820` lands from LAX at 05:40 and leaves
+for BKK at 07:40), and the two must not collapse into a single record.
+
+An alert marks a flight whose **gate** or **stand** has moved away from the
+value it was originally assigned. The first allocation is the baseline, not
+news — every flight gets a gate, so alerting on it would produce hundreds of
+rows a day. Only a later divergence alerts:
 
 ```
 N24 -> -        released    (the position was withdrawn)
@@ -174,6 +183,11 @@ a side detail panel; 80–119 columns a single list with an overlay detail; 40�
 columns a two-line compact row; below 40 columns or 16 rows a size hint (with
 state preserved). Selection and viewport scroll are tracked separately.
 
+A row's route cell carries its direction — `← KIX` arriving from KIX, `→ KIX`
+departing for KIX — because one flight number can appear in both directions.
+The gate/stand cell shows a departure's gate as `G68` and an arrival's stand
+verbatim as `W63`.
+
 ### 5.3 Search and filtering
 
 `/` enters search. Whitelisted fields: flight number, codeshare numbers, airline
@@ -237,10 +251,12 @@ python -m hkg_flight clear-cache [DATE] [--yes]
 
 Dates use `YYYY-MM-DD`. Without a date, `query` searches today; between
 22:00–01:59 HKT it also looks at the neighbouring day so late-night and
-early-morning flights are found. A stand or gate query that matches nothing
-falls back to a flight-number match, so an input such as `D7` never silently
-hides a flight. Result sets over 10 rows, and airline-code searches, use a
-10-row interactive pager.
+early-morning flights are found. A result set covering more than one day is
+divided by a dated rule (`-- 2026-09-11 ----`), so the same scheduled time on
+consecutive days cannot read as a duplicated row. A stand or gate query that
+matches nothing falls back to a flight-number match, so an input such as `D7`
+never silently hides a flight. Result sets over 10 rows, and airline-code
+searches, use a 10-row interactive pager.
 
 ## 8. File structure
 

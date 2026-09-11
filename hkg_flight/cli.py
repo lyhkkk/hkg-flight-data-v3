@@ -53,15 +53,16 @@ def _is_airline_code(term):
     return bool(_AIRLINE_RE.fullmatch(term))
 
 
-def _search_dates(date_str):
+def _search_dates(date_str, now=None):
     """Dates to search when the caller did not pin one (HKT-aware).
 
     22:00-01:59 spans midnight, so late-night and early-morning queries look at
-    the neighbouring day as well; 02:00-21:59 searches today only.
+    the neighbouring day as well; 02:00-21:59 searches today only. ``now`` is
+    injectable so the rule can be tested without waiting for the clock.
     """
     if date_str:
         return [date_str]
-    now = datetime.now(_HKT)
+    now = now or datetime.now(_HKT)
     today = now.date()
     if now.hour >= 22:
         return [today.isoformat(), (today + timedelta(days=1)).isoformat()]
@@ -190,16 +191,37 @@ def print_flight_details(rec, index=None):
         print(f"{label}: {value}")
 
 
+def _spans_dates(records):
+    """True when a result set covers more than one calendar day."""
+    return len({r.get("date", "") for r in records}) > 1
+
+
+def _print_flight_rows(records, width=DEFAULT_WIDTH, spanning=None):
+    """Column header, rule, then one row per flight.
+
+    When the set spans several days (``query`` looks at two dates across
+    midnight) each day gets a dated divider, so the same scheduled time on
+    consecutive days cannot read as a duplicated row.
+    """
+    if spanning is None:
+        spanning = _spans_dates(records)
+    print(views.flight_header(width))
+    print(views.rule(width))
+    current = None
+    for rec in records:
+        if spanning and rec.get("date") != current:
+            current = rec.get("date")
+            print(views.date_separator(current, width))
+        print(views.flight_row(rec, width)[0])
+
+
 def _print_table(records, title, width=DEFAULT_WIDTH):
     """One compact row per flight, using the shared row renderer."""
     if not records:
         print("No flights found.")
         return
     print(f"\n{title} — {len(records)} flight(s)\n")
-    print(views.flight_header(width))
-    print(views.rule(width))
-    for rec in records:
-        print(views.flight_row(rec, width)[0])
+    _print_flight_rows(records, width)
 
 
 def print_flight_table(records, title):
@@ -219,15 +241,13 @@ def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE,
         return 0
 
     total_pages = (total + page_size - 1) // page_size
+    spanning = _spans_dates(records)
     page = 1
     while True:
         start = (page - 1) * page_size
         end = min(start + page_size, total)
         print(f"\n{title} — {total} flight(s), showing {start + 1}-{end}\n")
-        print(views.flight_header(width))
-        print(views.rule(width))
-        for rec in records[start:end]:
-            print(views.flight_row(rec, width)[0])
+        _print_flight_rows(records[start:end], width, spanning=spanning)
         print(f"\nPage {page}/{total_pages} — [Enter/N]ext [P]rev [Q]uit, or type a page number")
 
         try:
@@ -252,7 +272,9 @@ def paginate_records(records, title, page_size=DEFAULT_PAGE_SIZE,
 
 def cmd_query(args, api):
     results = search_flights(api, args.flight, args.date, include_codeshare=args.codeshare)
-    title = f"{args.flight.upper()} flights {args.date or ''}".strip()
+    title = f"Query '{args.flight.upper()}'"
+    if args.date:
+        title += f" on {args.date}"
 
     if not results:
         print(f"No flights found for '{args.flight}'")

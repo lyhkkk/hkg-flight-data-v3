@@ -11,6 +11,14 @@
   不做二次防御（`views` 只做 `[` 转义）。不要把清洗逻辑搬回渲染层。
 - **渲染单一来源**: TUI 与 plain 共用 `views.flight_header()` / `flight_row()` /
   `alert_line()` / `airline_line()`。不要为 plain 另写一套表格。
+- **flight key 含方向**: `{date}_{ARR|DEP}_{flight_number}`。HKIA 每天有约 6 个
+  **同号双向**航班（同一天同一航班号既到达又出发，如 UA820）。key 少了方向会
+  在 `search_flights` 去重时静默丢数据、让 `poller` 的 `old_map` 塌陷、让到达航班
+  落地时抹掉出发航班的告警。**任何以 flight key 为身份的代码都要意识到方向。**
+- **gate/stand 渲染**: `gate` 是**裸数字**（`68`）且只出现在出发 → 显示时补 `G`
+  成 `G68`；`stand` **自带区域字母**（`W63`/`D201`/`S25`）且只出现在到达 →
+  **原样显示，绝不要再补前缀**（曾渲染出 `SW69`、web 端 `Stand W63`）。
+- **ROUTE 列带方向**: `← KIX` 到达 / `→ KIX` 出发。裸机场码在混合列表里有歧义。
 - **并发模型**: poller 只有一个写者线程，`_refresh` 串行执行。刷新期间的手动请求
   返回 `already_running`，不排队。**不要重新引入 generation / publish-gate。**
 - **告警语义（2026-09-11 重制）**: 告警 = 偏离**最初分配**。首次分配是基线，不告警；
@@ -27,6 +35,10 @@
   以及第三方 agent 的 gate 基线测试，均已删除。新增测试不要为私有实现写断言。
 - 离线夹具在 `tests/fixtures/terminal/data.py`。
 - 增强 UI 测试在未安装 Textual 时自动 skip。
+- **时间相关的纯函数要把"现在"作为可注入参数**（如 `cli._search_dates(date_str, now=None)`），
+  否则测试会变成定时炸弹——`test_search_dates_covers_today_by_default` 就只在白天通过。
+- **写回归测试后反向验证一次**：把 bug 打回去，确认测试确实失败。否则可能只是
+  "恰好通过"。
 
 ## 文档约定
 

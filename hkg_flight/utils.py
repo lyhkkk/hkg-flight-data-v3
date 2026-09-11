@@ -50,9 +50,16 @@ def normalize_flight_number(no):
     return str(no).strip().replace(" ", "").upper()
 
 
-def make_flight_key(date_str, flight_number):
-    """Stable per-flight key, e.g. ``2026-08-16_CX759``."""
-    return f"{date_str}_{normalize_flight_number(flight_number)}"
+def make_flight_key(date_str, flight_number, flight_type):
+    """Stable per-flight key, e.g. ``2026-08-16_DEP_CX759``.
+
+    The direction is part of the identity. HKIA schedules real turnaround
+    flights where one number arrives and departs on the same day (``UA820``
+    lands from LAX at 05:40 and leaves for BKK at 07:40); without the tag they
+    collapse into a single key and one of them is lost.
+    """
+    tag = "ARR" if flight_type == "arrival" else "DEP"
+    return f"{date_str}_{tag}_{normalize_flight_number(flight_number)}"
 
 
 def log(msg):
@@ -144,7 +151,7 @@ def normalize_flights(raw_data):
         if not isinstance(entry, dict) or entry.get("cargo"):
             continue
 
-        is_arrival = bool(entry.get("arrival"))
+        flight_type = "arrival" if entry.get("arrival") else "departure"
         entry_date = clean_text(entry.get("date"))
 
         for flight_obj in entry.get("list") or []:
@@ -178,13 +185,13 @@ def normalize_flights(raw_data):
             raw_status = clean_text(flight_obj.get("status"))
 
             records.append({
-                "key": make_flight_key(entry_date, flight_number),
+                "key": make_flight_key(entry_date, flight_number, flight_type),
                 "date": entry_date,
                 "time": clean_text(flight_obj.get("time")),
                 "flight_number": flight_number,
                 "airline_code": clean_text(primary.get("airline")),
                 "all_flight_numbers": "|".join(all_nos),
-                "type": "arrival" if is_arrival else "departure",
+                "type": flight_type,
                 "status": raw_status,
                 "status_category": status_category(raw_status),
                 "terminal": clean_text(flight_obj.get("terminal")),

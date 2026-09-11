@@ -358,6 +358,12 @@ function changeText(alert) {
   const to = alert.new_value ? esc(alert.new_value) : '<span class="gone">—</span>';
   return `<span class="change">${from} <span class="to">→</span> ${to}</span>`;
 }
+// HKIA returns the gate as a bare number but the stand already carries its
+// letter (W69, D201), so only the gate needs a prefix.
+function positionText(f) {
+  if (f.type === "arrival") return esc(f.stand) || "—";
+  return f.gate ? "G" + esc(f.gate) : "—";
+}
 
 function renderFlights() {
   const q = $("search").value.trim().toLowerCase();
@@ -377,13 +383,12 @@ function renderFlights() {
   $("flights-body").innerHTML = rows.slice(0, 400).map(f => {
     const arrival = f.type === "arrival";
     const place = arrival ? (esc(f.origin) || "N/A") : (esc(f.destination) || "N/A");
-    const where = arrival ? "Stand " + (esc(f.stand) || "—") : "Gate " + (esc(f.gate) || "—");
     return `<tr>
       <td class="mono">${esc(f.time) || "--:--"}</td>
       <td class="flight">${esc(f.flight_number) || "N/A"}</td>
       <td><span class="dir">${arrival ? "FROM" : "TO"}</span>${place}</td>
       <td>${pill(f.status, f.status_category)}</td>
-      <td class="mono">${where}</td>
+      <td class="mono">${positionText(f)}</td>
       <td>${esc(f.terminal) || "—"}</td>
     </tr>`;
   }).join("");

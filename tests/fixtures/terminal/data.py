@@ -37,19 +37,20 @@ def make_flight(index, date=DEFAULT_DATE):
     icao = ICAO_CODES[airline_i]
     number = AIRLINE_CODES[airline_i] + str(100 + (index % 800))
     is_arrival = (index % 2) == 1
+    flight_type = "arrival" if is_arrival else "departure"
     status_raw, category = STATUSES[index % len(STATUSES)]
     codeshare = ""
     if index % 7 == 0:
         codeshare = "|".join([number, f"QR{9000 + index % 999}"])
 
     rec = {
-        "key": make_flight_key(date, number),
+        "key": make_flight_key(date, number, flight_type),
         "date": date,
         "time": f"{(index * 7) % 24:02d}:{(index * 11) % 60:02d}",
         "flight_number": number,
         "airline_code": icao,
         "all_flight_numbers": codeshare or number,
-        "type": "arrival" if is_arrival else "departure",
+        "type": flight_type,
         "status": status_raw,
         "status_category": category,
         "terminal": TERMINALS[index % len(TERMINALS)],

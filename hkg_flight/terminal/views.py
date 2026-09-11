@@ -365,12 +365,27 @@ def _status_cell(rec, color):
 
 
 def gate_stand_short(rec):
-    """Compact gate/stand cell, e.g. ``G63`` / ``S12`` / ``--``."""
+    """Compact gate/stand cell, e.g. ``G63`` / ``W63`` / ``--``.
+
+    HKIA returns the gate as a bare number but the stand already carries its
+    letter (``W69``, ``D201``, ``S25``), so only the gate needs a prefix. A
+    departure is identified by its gate and an arrival by its stand.
+    """
     if rec.get("type") == "departure":
         gate = rec.get("gate")
         return f"G{gate}" if gate else "--"
-    stand = rec.get("stand")
-    return f"S{stand}" if stand else "--"
+    return rec.get("stand") or "--"
+
+
+def route_short(rec):
+    """Compact route cell: ``→ KIX`` when leaving for KIX, ``← KIX`` from KIX.
+
+    The bare airport code is ambiguous in a mixed list, and the same number can
+    appear as both an arrival and a departure.
+    """
+    if rec.get("type") == "departure":
+        return f"→ {rec.get('destination') or '—'}"
+    return f"← {rec.get('origin') or '—'}"
 
 
 def flight_header(width, marker_width=2):
@@ -381,7 +396,7 @@ def flight_header(width, marker_width=2):
 def flight_row(rec, width, color=False, selected=False, compact=False):
     """Render one flight record as one or two lines inside ``width`` cells."""
     marker = "> " if selected else "  "
-    route = rec.get("destination") if rec.get("type") == "departure" else rec.get("origin")
+    route = route_short(rec)
     status = _status_cell(rec, color)
     gate = gate_stand_short(rec)
     term = rec.get("terminal", "") or "-"
@@ -443,6 +458,16 @@ def airline_line(row, width, selected=False):
 
 def rule(width, span=78):
     return "-" * max(0, min(span, width))
+
+
+def date_separator(date_str, width):
+    """Dated divider, e.g. ``-- 2026-09-11 ----------------``.
+
+    ``query`` searches two dates across midnight; without a divider the same
+    scheduled time on consecutive days reads as a duplicated row.
+    """
+    label = f"-- {date_str} "
+    return truncate(label + "-" * max(0, width - text_width(label)), width)
 
 
 # -- detail blocks -------------------------------------------------------
