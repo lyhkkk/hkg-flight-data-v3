@@ -36,8 +36,16 @@
   把标签宽度写进列定义。
 - **TUI 整宽 widget 不许有横向 padding**（2026-09-12）。`theme.tcss` 的
   `#header/#nav/#search_row/#body/#footer` 都是 `padding: 0`，因为渲染层拿到的是
-  终端宽度；有 padding 时 Textual 会按**词**折行（把整个最后一个词推到下一行，
-  而不是裁掉溢出格）。gutter 由渲染层提供。
+  终端宽度。**不变量：widget 内容宽 == 渲染宽度。** 有 padding 时 Textual 不裁溢出，
+  而是按**词**折行（把整个最后一个词推到下一行）。
+  实测（真机 Textual 8.2.8，55×30，`padding: 0 1`）：真正裂开的是**分隔线**
+  （`"-" * width`，没有空格可吸收溢出）；航班行有 6 格尾部空格兜着，反而没折。
+  所以别用「航班行折没折」判断这条不变量——要用分隔线，或直接断言内容宽。
+- **`export_screenshot()` 是按样式段输出，不是按行**（2026-09-12 踩过）。
+  SVG 里每个 `<text>` 是一个**样式段**：航班行的状态单独着色，所以它和前半段是
+  **同一个 `y` 上的两个 `<text>`**。把每个 `<text>` 当一行读会**凭空造出折行**。
+  正确读法见 `tests/test_terminal_textual.py`：按 `y` 分组、用 `x` 拼回格位；
+  单元格宽由「每行右边缘的 marker 段」标定（`max(x) / 终端宽度`，真机是 12.2）。
 - **TUI chrome 占 4 行**（`views.CHROME_ROWS`），`textual_app._body_height()` 与
   `body_lines` 都用它；`theme.tcss` 里那 4 个 widget 必须各 1 行（有测试解析 CSS 锁住）。
 - **阶梯写法统一用 `views.fit()`**（CLI 与 TUI 共用），不要各写一份。
@@ -56,13 +64,26 @@
 - 历史上存在"锁定死代码的测试"（如 `test_read_write_state`、`test_status_pair`），
   以及第三方 agent 的 gate 基线测试，均已删除。新增测试不要为私有实现写断言。
 - 离线夹具在 `tests/fixtures/terminal/data.py`。
-- 增强 UI 测试在未安装 Textual 时自动 skip。
+- 增强 UI 测试在未安装 Textual 时自动 skip。**本机已装 Textual 8.2.8，但只装在
+  系统 Python 3.14**（`C:\Users\avery\AppData\Local\Programs\Python\Python314\python.exe`）；
+  WorkBuddy 托管的 3.13 没有 Textual。要跑真机 TUI 测试就用 3.14，
+  期望 **283 用例、0 skipped**；用 3.13 跑是 **12 skipped**。
+- **真机 TUI 测试的写法**（`tests/test_terminal_textual.py`）：
+  `app.run_test(size=(w, h))` + `pilot.pause()`；观察屏幕只能用
+  `app.export_screenshot()`，并按 `y` 重建行（见上面 `export_screenshot` 陷阱）；
+  触发重绘用 `app.revision += 1`（app 自己的 reactive），**不要调 `_refresh_view()`**；
+  比较文本用 `views.strip_tags()`，**不要读 `app._color`**（`body_lines` 的 `color`
+  只加 markup，可见文本相同）。
 - **时间相关的纯函数要把"现在"作为可注入参数**（如 `cli._search_dates(date_str, now=None)`），
   否则测试会变成定时炸弹——`test_search_dates_covers_today_by_default` 就只在白天通过。
 - **写回归测试后反向验证一次**：把 bug 打回去，确认测试确实失败。否则可能只是
-  "恰好通过"。
+  "恰好通过"。反证（negative control）也要反向验证一次：让「本该发生的事」不发生，
+  确认断言会挂。
 - **给渲染加"输出 ≤ 请求宽度"的不变量测试**，扫一串宽度（120…1）。这条不变量
   曾顺带挖出两处别处的同类 bug（见 2026-09-11 第四轮、2026-09-12）。
+- **最强的端到端不变量：渲染器产出的每一行都必须原样成为屏幕上的「一行」**
+  （`test_every_rendered_line_reaches_the_screen_intact`，扫 42/55/80/120 列）。
+  折行、裁切、少一行，全都会被这一条抓到。
 - **同一不变量要在两个布局档位都测**（紧凑档 / 单行档）。紧凑档的两行 row 会把
   余数 floor 掉，恰好掩盖边界错误（2026-09-12 的高度预算就中过招）。
 
@@ -74,7 +95,13 @@
 ## 验证命令
 
 ```bash
-python -m compileall -q hkg_flight tests cleanup_alerts.py test_hkg_flight.py
-python -m ruff check .
-python -m unittest discover -s . -p "test*.py"
+# 基础包（WorkBuddy 托管 Python 3.13，无 Textual）—— 期望 283 用例、12 skipped
+C:/Users/avery/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe -m compileall -q hkg_flight tests cleanup_alerts.py test_hkg_flight.py
+C:/Users/avery/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe -m ruff check .
+C:/Users/avery/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe -m unittest discover -s . -p "test*.py"
+
+# 真机 TUI（系统 Python 3.14，有 Textual 8.2.8）—— 期望 283 用例、0 skipped
+C:/Users/avery/AppData/Local/Programs/Python/Python314/python.exe -m unittest discover -s . -p "test*.py"
 ```
+
+两个解释器都要跑：3.13 证明基础包零依赖，3.14 证明增强 UI 真的能渲染。

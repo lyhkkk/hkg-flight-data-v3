@@ -1,8 +1,66 @@
 # HKG Flight Data v3 — Project Status
 
-> 最后更新: 2026-09-11
+> 最后更新: 2026-09-12
 
-## 项目状态: ✅ TUI 宽度与列宽修正，276 项测试 + lint 全绿
+## 项目状态: ✅ TUI 真机验证通过，283 项测试 + lint 全绿
+
+## 第五轮修正 — 2026-09-12（装上 Textual，真机验证 + 两处结论订正）
+
+第四轮的结论是**离线**推出来的（逐行量宽度 + 解析 `theme.tcss`）。装上 Textual
+8.2.8（Python 3.14）后把 TUI 真的跑起来，发现两处需要订正。
+
+### 订正一：`export_screenshot()` 是**按样式段**输出，不是按行
+
+Textual 的 SVG 里每行不是 `<text>`，而是**每个样式段一个 `<text>`**。航班行的状态
+是单独着色的，所以它和前半段是**同一个 `y` 上的两个 `<text>`**（状态在 `x=280.6`，
+即第 23 格）。把每个 `<text>` 当成一行去读，会**凭空造出折行**——第一版测试助手就是
+这么写的，于是「状态独占一行」的假象在修复后的代码上又出现了一次。
+
+正确读法：按 `y` 分组，再用 `x` 把每段拼回它所在的格。单元格宽是字体度量
+（12.2），不写死——Rich 会给每一行在右边缘补一个 marker 段，`max(x) / 终端宽度`
+就是它。
+
+### 订正二：55 列下 `padding: 0 1` 折的是**分隔线**，不是航班行
+
+实测（`padding: 0 1`，55×30）：屏幕画出 **31 行**，逻辑行只有 25 行——多出来的 1 行
+是**分隔线**。分隔线是 `"-" * width`，**没有一个空格可以吸收溢出**，所以内容宽少
+2 格就立刻裂成两行；而航班行有 6 格尾部空格兜着，55 列下（有效内容 49 格）反而没折。
+
+所以「内容宽 ≠ 渲染宽」确实是必须修的不变量违例（分隔线就是证据），但**航班行本身
+在那个宽度下没折**。手机截图里日期被挤下去，主因是**缺陷三**（STATUS 列被权重饿死
+到 22 格，状态先被截成残段）叠加**缺陷二**（顶栏/导航/底栏不看宽度而折行，chrome
+从 4 行涨到 6 行，把 body 挤掉 2 行）。第四轮的修复方向没问题，只是归因需要修正。
+
+### 真机验证到的几何（Textual 8.2.8）
+
+| 断言 | 结果 |
+|---|---|
+| `#body.content_size.width == app.size.width` | ✅ 55 / 80 / 100 / 45 / 120 全部成立 |
+| `#header` / `#nav` / `#footer` | ✅ 每个都是 `Size(width=W, height=1)` |
+| `#body.size.height` | ✅ `app.size.height - 4`，即 `views.CHROME_ROWS` |
+| `#body` 全部 widget padding | ✅ `0 0` |
+
+### 新增 4 条真机测试（`TestTextualGeometry`）
+
+| 测试 | 断言 |
+|---|---|
+| `test_every_rendered_line_reaches_the_screen_intact` | **最强的一条**：`views` 产出的每一行（4 条 chrome + body）都必须原样成为屏幕上的**一行**。42/55/80/120 列都扫 |
+| `test_a_long_status_stays_on_its_flight_row` | 42/45/48/55/80/100/120 列下，26 格状态都和它的航班号在同一行，且没有任何一行是孤立的日期残段 |
+| `test_a_word_that_does_not_fit_moves_to_its_own_row` | 反证：故意喂一个放不下的词，确认检测器真的能看见折行 |
+| `test_the_old_padding_would_have_wrapped` | 反证：把 `padding: 0 1` 装回去，分隔线必须裂成两行 |
+
+**反向验证**（把 bug 打回去，确认测试真的会失败）：
+
+| 打回的 bug | 失败的测试 |
+|---|---|
+| 去掉 STATUS 列最小宽度（退回纯权重） | `test_a_long_status_stays_on_its_flight_row` |
+| 把「每段当一行」的旧助手装回去 | `test_a_long_status_stays_on_its_flight_row` + `test_every_rendered_line_reaches_the_screen_intact` |
+| 让渲染出的一行比 widget 宽 | `test_every_rendered_line_reaches_the_screen_intact` |
+| 让溢出刚好放得下 | `test_a_word_that_does_not_fit_moves_to_its_own_row`（找不到那个词） |
+
+### 结果
+
+`unittest` 276 → **283**（+7：真机测试 12 条，此前 5 条被 skip，现在 0 条 skip）。
 
 ## 第四轮修正 — 2026-09-12（TUI 折行）
 
@@ -20,6 +78,9 @@ widget 内容宽 = `size.width - 2`；而 `body_lines` 是按 `size.width` 渲�
 修复：**去掉所有横向 padding**，让「渲染宽度 = 终端宽度」成为唯一来源，gutter
 改由渲染层提供（header/nav/footer 自带前导空格，航班行自带两格选择标记）。
 不这么做的话，CSS 的 padding 与 Python 里的宽度常量要永远手工同步。
+
+> ⚠️ 本节的归因已在**第五轮**订正：55 列下真正被折掉的是分隔线而不是航班行，
+> 且当时的测量助手把「样式段」当成了「行」。详见上文第五轮。
 
 ### 缺陷二：顶栏/导航/底栏根本不看宽度
 
@@ -195,9 +256,9 @@ CLI 把宽度写死成 `DEFAULT_WIDTH = 78`，完全不看真实终端。78 列�
 
 | 项目 | 状态 |
 |------|------|
-| Python | 3.9+（基础包），3.11 / 3.13 为 CI 目标 |
+| Python | 3.9+（基础包），3.11 / 3.13 为 CI 目标；本机 3.13 与 3.14 均通过 |
 | 依赖 | 基础包仅标准库；`.[tui]` 可选引入 Textual |
-| 测试 | 228 用例通过（5 skipped：未安装 Textual 时的增强 UI 测试） |
+| 测试 | **283 用例通过**（装了 Textual 8.2.8 时 0 skipped；未装时 12 skipped） |
 | Lint | `ruff check .` 全部通过 |
 | 数据源连接 | ✅ 实测（今日 417 departures / 415 arrivals） |
 
@@ -259,23 +320,30 @@ CLI 把宽度写死成 `DEFAULT_WIDTH = 78`，完全不看真实终端。78 列�
 ```bash
 python -m compileall -q hkg_flight tests cleanup_alerts.py test_hkg_flight.py   # OK
 python -m ruff check .                                                          # All checks passed
-python -m unittest discover -s . -p "test*.py"                                  # 276 tests, OK (skipped=5)
+python -m unittest discover -s . -p "test*.py"                                  # 283 tests, OK
 ```
+
+两个解释器都跑过：
+
+| 解释器 | 结果 |
+|---|---|
+| Python 3.14 + Textual 8.2.8 | 283 tests, **OK（0 skipped）** |
+| Python 3.13（无 Textual） | 283 tests, OK（skipped=12） |
 
 本轮另做了 Web 端到端冒烟：起服务器 → `/` 返回仪表盘 → `/api/alerts` 返回
 `CX759 GATE 62 → 63` → `/api/stats` 报告 `source=api, flights=1, alerts=1`。
 
 ## 已知问题
 
-- 增强 UI 需要 `.[tui]`；**本机未安装 Textual，TUI 的渲染只能离线验证**
-  （逐行量宽度 + 解析 `theme.tcss`），折行行为本身无法在此复现
-- 窄终端的**不折行**已用真实数据全宽度扫描验证；观感仍建议在真机手机上人工看一眼
+- 增强 UI 需要 `.[tui]`；本机已装 Textual 8.2.8，增强 UI 测试与真机几何均已验证
+- 窄终端的**不折行**已用真实数据全宽度扫描验证，并在真机 Textual 上复现验证；
+  观感仍建议在真机手机上人工看一眼
 - 香港业务日期语义（Asia/Hong_Kong 统一）仍为独立待决项
 - 告警上限 500 条、按当前数据日期清理，`cleanup_alerts.py` 现在只用于手工查看/清空
 
 ## 后续建议
 
-- [ ] 在装有 Textual 的环境跑一次增强 UI 测试与真机交互
+- [x] ~~在装有 Textual 的环境跑一次增强 UI 测试与真机交互~~ —— 已完成（第五轮）
 - [ ] 如需跨重启的变更检测，重新设计 state 持久化（当前仅进程内快照）
 - [x] ~~考虑给 Web 仪表盘增加告警视图~~ —— 已完成
 

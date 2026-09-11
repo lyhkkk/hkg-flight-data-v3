@@ -207,9 +207,13 @@ never given a minimum of its own, because that would shift every column.
 The Textual workbench spends `views.CHROME_ROWS` rows (4) on its own bars -
 header, nav, search row and footer - and the body gets the rest, so the last
 list row is never clipped. Those widgets run edge to edge: `theme.tcss` sets no
-horizontal padding, because the renderer is handed the terminal width and any
-padding would make Textual re-wrap every line at its last word. The gutter lives
-in the renderer instead. The bars are written as ladders (see §7), so the header
+horizontal padding, so a widget's content width is exactly the terminal width
+the renderer was handed. Textual does not clip a line that is one cell too wide
+- it moves whole words onto the next row. That is what split the rule (a run of
+`-` with no spaces to absorb the overflow) in two while the widgets were
+padded, and what the end-to-end geometry tests now pin: every string the views
+produce has to arrive as exactly one screen row. The gutter lives in the
+renderer instead. The bars are written as ladders (see §7), so the header
 loses its source timestamp before its freshness label, and the footer keeps `q`
 even at 20 columns.
 
