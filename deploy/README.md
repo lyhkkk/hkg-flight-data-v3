@@ -157,6 +157,9 @@ DEFAULT_MIN_API_INTERVAL = 0.6  # API 调用最小间隔（秒）
 
 ### 清理告警缓存
 
+告警已自动维护（上限 500 条、按当前数据日期清理、航班起飞后自动移除），
+正常情况下无需手工清理。下面命令仅在需要人工检查或清空时使用：
+
 ```bash
 # 查看将要清理的内容（干运行）
 python cleanup_alerts.py --days 7
@@ -201,8 +204,8 @@ python -m hkg_flight web 2>&1 | tee hkg_flight.log
    - 检查端口占用：`netstat -an | findstr 8080`
 
 4. **缓存过大**
-   - 定期运行 `cleanup_alerts.py`
-   - 手动删除 `~/.hkg_flight_cache/` 中的旧文件
+   - 告警已自动限流（500 条上限、按日期清理），通常无需干预
+   - 手动删除 `~/.hkg_flight_cache/` 中的旧文件，或运行 `python -m hkg_flight clear-cache`
 
 ## 项目结构
 
@@ -219,7 +222,7 @@ hkg-flight-data-v3/
 ├── deploy/               # 部署文档
 │   └── README.md         # 本文件
 ├── test_hkg_flight.py    # 测试套件
-├── cleanup_alerts.py     # 告警清理脚本
+├── cleanup_alerts.py     # 告警缓存查看 / 清空（通常无需运行）
 ├── README.md             # 使用说明
 └── SPEC.md               # 规格说明
 ```

@@ -169,14 +169,19 @@ class TestCacheSystem(TempCacheCase):
         self.cache.write_airlines([{"code": "CX"}])
         self.assertEqual(self.cache.read_airlines(), [{"code": "CX"}])
 
-    def test_alerts_roundtrip_normalizes_shape(self):
-        self.cache.write_alerts({"active": [{"k": 1}], "history": [{"k": 2}], "extra": 9})
-        self.assertEqual(self.cache.read_alerts(), {"active": [{"k": 1}], "history": [{"k": 2}]})
+    def test_alerts_roundtrip(self):
+        self.cache.write_alerts([{"key": "k", "new_value": "63"}])
+        self.assertEqual(self.cache.read_alerts(), [{"key": "k", "new_value": "63"}])
 
     def test_alerts_read_survives_garbage(self):
         with open(self.cache.alerts_path, "w", encoding="utf-8") as fh:
-            fh.write("[1,2,3]")
-        self.assertEqual(self.cache.read_alerts(), {"active": [], "history": []})
+            fh.write("[1, 2, 3]")
+        self.assertEqual(self.cache.read_alerts(), [])
+
+    def test_alerts_read_accepts_the_legacy_shape(self):
+        with open(self.cache.alerts_path, "w", encoding="utf-8") as fh:
+            fh.write('{"active": [{"key": "k"}], "history": [{"key": "h"}]}')
+        self.assertEqual(self.cache.read_alerts(), [{"key": "k"}])
 
     def test_cache_age_minutes(self):
         self.cache.write_airlines([])
@@ -289,11 +294,35 @@ class TestAlertManager(TempCacheCase):
         self.assertEqual(len(active), 1)
         self.assertEqual(active[0]["new_value"], "64")
 
+    def test_first_allocation_raises_nothing(self):
+        self.alerts.process_flight(self.flight(gate=""), self.flight(gate="62"))
+        self.assertEqual(self.alerts.active_count(), 0)
+
+    def test_release_raises_an_alert(self):
+        self.alerts.process_flight(self.flight(gate="62"), self.flight(gate=""))
+        active = self.alerts.get_active()
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["old_value"], "62")
+        self.assertEqual(active[0]["new_value"], "")
+
+    def test_reallocation_reports_the_original_baseline(self):
+        self.alerts.process_flight(self.flight(gate="62"), self.flight(gate=""))
+        self.alerts.process_flight(self.flight(gate=""), self.flight(gate="64"))
+        active = self.alerts.get_active()
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["old_value"], "62")
+        self.assertEqual(active[0]["new_value"], "64")
+
+    def test_returning_to_the_baseline_clears_the_alert(self):
+        self.alerts.process_flight(self.flight(gate="62"), self.flight(gate="63"))
+        self.alerts.process_flight(self.flight(gate="63"), self.flight(gate="62"))
+        self.assertEqual(self.alerts.active_count(), 0)
+
     def test_cleared_when_flight_departs(self):
         self.alerts.process_flight(self.flight(gate="62"), self.flight(gate="63"))
+        self.assertEqual(self.alerts.active_count(), 1)
         self.alerts.process_flight(self.flight(gate="63"), self.flight(gate="63", status="Departed 09:10"))
         self.assertEqual(self.alerts.active_count(), 0)
-        self.assertEqual(len(self.alerts.get_history()), 1)
 
     def test_revision_advances_on_change(self):
         before = self.alerts.alerts_revision()
@@ -306,11 +335,18 @@ class TestAlertManager(TempCacheCase):
         snapshot["alerts"][0]["new_value"] = "TAMPERED"
         self.assertNotEqual(self.alerts.get_active()[0]["new_value"], "TAMPERED")
 
-    def test_history_is_bounded(self):
+    def test_alert_list_is_bounded(self):
         for i in range(600):
-            self.alerts.process_flight(self.flight(gate="1"), self.flight(gate="2"))
-            self.alerts.process_flight(self.flight(gate="2"), self.flight(gate="2", status="Departed"))
-        self.assertLessEqual(len(self.alerts.get_history()), 500)
+            old = self.flight(gate="1")
+            new = self.flight(gate="2")
+            old["key"] = new["key"] = f"{TODAY}_CX{i}"
+            self.alerts.process_flight(old, new)
+        self.assertLessEqual(self.alerts.active_count(), 500)
+
+    def test_retain_date_drops_other_days(self):
+        self.alerts.process_flight(self.flight(gate="62"), self.flight(gate="63"))
+        self.alerts.retain_date("2020-01-01")
+        self.assertEqual(self.alerts.active_count(), 0)
 
     def test_alerts_persist_across_instances(self):
         self.alerts.process_flight(self.flight(gate="62"), self.flight(gate="63"))
@@ -659,7 +695,7 @@ class TestClearCache(TempCacheCase):
     def test_clears_only_owned_files(self):
         self.cache.write_flights(TODAY, [])
         self.cache.write_airlines([])
-        self.cache.write_alerts({"active": [], "history": []})
+        self.cache.write_alerts([])
         outsider = os.path.join(self.tmp, "important.txt")
         with open(outsider, "w", encoding="utf-8") as fh:
             fh.write("keep me")
@@ -710,7 +746,6 @@ class TestIntegration(TempCacheCase):
         api.data = [payload("CX 759", gate="63", status="Departed 09:10")]
         poller.refresh_today()
         self.assertEqual(alerts.active_count(), 0)
-        self.assertEqual(len(alerts.get_history()), 1)
 
 
 if __name__ == "__main__":

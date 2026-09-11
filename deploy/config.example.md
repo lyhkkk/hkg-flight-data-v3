@@ -126,12 +126,20 @@ def log(msg):
 
 ### 清理旧告警
 
+告警由程序自动维护：上限 500 条、仅保留当前数据日期、航班起飞 / 降落 / 取消
+后自动移除。**不再需要定时清理任务**。
+
+如需人工检查或清空：
+
 ```bash
-# 清理 7 天前的告警
+# 查看将要清理的内容（干运行）
+python cleanup_alerts.py --days 7
+
+# 应用清理
 python cleanup_alerts.py --days 7 --apply
 
-# 添加到 crontab（Linux）
-0 2 * * * cd /path/to/hkg-flight-data-v3 && python cleanup_alerts.py --days 7 --apply
+# 清空全部告警
+python cleanup_alerts.py --clear-all --apply
 ```
 
 ## 安全注意事项

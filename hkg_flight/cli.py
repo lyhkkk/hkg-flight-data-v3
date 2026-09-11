@@ -24,7 +24,7 @@ from .utils import (
     sort_flights,
 )
 from .terminal import views
-from .terminal.presenter import detail_lines
+from .terminal.presenter import detail_lines, sort_alerts
 
 DEFAULT_PAGE_SIZE = 10
 DEFAULT_WIDTH = views.DEFAULT_WIDTH
@@ -282,16 +282,16 @@ def cmd_arrivals(args, api):
 
 
 def cmd_alerts(alert_manager):
-    active = alert_manager.get_active()
+    """Print gate/stand divergences, using the shared workbench renderer."""
+    active = sort_alerts(alert_manager.get_active())
     if not active:
-        print("No active alerts.")
+        print("No gate/stand changes.")
         return 0
-    print(f"Active alerts: {len(active)}")
+    print(f"\nGate/stand changes — {len(active)}\n")
+    print(views.alert_header(DEFAULT_WIDTH))
+    print(views.rule(DEFAULT_WIDTH))
     for alert in active:
-        print("⚠ {} {} change: {} → {} | status: {} | raised: {}".format(
-            alert.get("flight_number", "N/A"), alert.get("field", "UNKNOWN"),
-            alert.get("old_value", ""), alert.get("new_value", ""),
-            alert.get("status", ""), alert.get("raised_at", "")))
+        print(views.alert_line(alert, DEFAULT_WIDTH))
     return 0
 
 
@@ -399,7 +399,7 @@ def create_parser():
     a = sub.add_parser("arrivals", help="List arrivals")
     a.add_argument("date", nargs="?", default=None, help="Date YYYY-MM-DD (default: today)")
 
-    sub.add_parser("alerts", help="Show active alerts")
+    sub.add_parser("alerts", help="Show gate/stand changes away from the original assignment")
 
     c = sub.add_parser("clear-cache", help="Clear cached data")
     c.add_argument("date", nargs="?", default=None, help="Specific date to clear (default: all)")

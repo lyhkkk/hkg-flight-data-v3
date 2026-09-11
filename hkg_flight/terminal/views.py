@@ -22,6 +22,7 @@ from .presenter import (
     DEPARTURES, ARRIVALS, ALERTS, AIRLINES,
     FLIGHT_PAGES,
     visible_rows, alert_rows, airline_rows, detail_lines, alert_identity,
+    alert_change_text,
 )
 
 PAGE_KEYS = {
@@ -137,6 +138,14 @@ FLIGHT_COLUMNS = (
     ("STATUS", 4),
     ("GATE/STAND", 3),
     ("TERM", 1),
+)
+
+# Alert rows: when the change was seen, which flight, what moved, current status.
+ALERT_COLUMNS = (
+    ("CHANGED", 2),
+    ("FLIGHT", 3),
+    ("CHANGE", 6),
+    ("STATUS", 4),
 )
 
 
@@ -396,16 +405,35 @@ def flight_row(rec, width, color=False, selected=False, compact=False):
     return [marker + layout(cells, width - 2)]
 
 
-def alert_line(alert, width, selected=False):
+def _short_time(value):
+    """``2026-09-11T09:12:00`` -> ``09:12`` (falls back to ``--:--``)."""
+    text = str(value or "")
+    if "T" in text:
+        text = text.split("T", 1)[1]
+    return text[:5] if len(text) >= 5 else (text or "--:--")
+
+
+def alert_header(width, marker_width=2):
+    """Column header aligned with :func:`alert_line`."""
+    return " " * marker_width + layout(list(ALERT_COLUMNS), width - marker_width)
+
+
+def alert_line(alert, width, color=False, selected=False):
+    """One gate/stand divergence as a single aligned row."""
     marker = "> " if selected else "  "
-    line = "{} {} {}: {} -> {}".format(
-        marker,
-        alert.get("flight_number", "?"),
-        alert.get("field", "?"),
-        alert.get("old_value", ""),
-        alert.get("new_value", ""),
-    )
-    return truncate(line, width)
+    change = f"{alert.get('field', '?')} {alert_change_text(alert)}"
+    status = escape_markup(alert.get("status", ""))
+    if color:
+        col = STATUS_COLORS.get(alert.get("status_category", ""))
+        if col:
+            status = f"[{col}]{status}[/{col}]"
+    cells = [
+        (_short_time(alert.get("raised_at", "")), 2),
+        (escape_markup(alert.get("flight_number", "?")), 3),
+        (escape_markup(change), 6),
+        (status, 4),
+    ]
+    return truncate(marker + layout(cells, width - 2), width)
 
 
 def airline_line(row, width, selected=False):
@@ -429,16 +457,19 @@ def alert_detail_lines(snap, alert_id, width):
     if alert is None:
         return ["Alert no longer available"]
     lines = [
-        f"Alert: {alert.get('flight_number', '?')}",
-        "Change: {} {} -> {}".format(
-            alert.get("field", "?"), alert.get("old_value", ""), alert.get("new_value", "")),
-        f"Status: {alert.get('status', '')}",
-        f"Raised: {alert.get('raised_at', '')}",
+        "{} — {} change".format(alert.get("flight_number", "?"), alert.get("field", "?")),
+        "",
+        f"Changed: {alert_change_text(alert)}",
+        f"When:    {alert.get('raised_at', '')}",
+        f"Status:  {alert.get('status', '')}",
+        "Flight:  {} {} {}".format(
+            alert.get("type", ""), alert.get("time", ""), alert.get("date", "")),
         "",
     ]
     flight = next(
         (r for r in snap["flights"]["records"] if r.get("key") == alert.get("key")), None)
     if flight is not None:
+        lines.append("current flight")
         lines.extend(detail_block(flight, width))
     else:
         lines.append("(flight not in current data)")
@@ -534,7 +565,8 @@ def body_lines(state, snap, width, height, color, detail_scroll=0):
         out.append(truncate(header, width))
         out.append(rule(width))
     elif state.current == ALERTS:
-        out.append(truncate(f"ACTIVE ALERTS ({len(rows)})", width))
+        out.append(truncate(f"GATE/STAND CHANGES ({len(rows)})", width))
+        out.append(truncate(alert_header(width), width))
         out.append(rule(width))
     else:
         out.append(truncate(f"AIRLINES ({len(rows)})", width))
@@ -546,7 +578,7 @@ def body_lines(state, snap, width, height, color, detail_scroll=0):
             out.extend(flight_row(row["record"], width, color, selected,
                                   compact=(tier == "compact")))
         elif state.current == ALERTS:
-            out.append(alert_line(row["record"], width, selected))
+            out.append(alert_line(row["record"], width, color, selected))
         else:
             out.append(airline_line(row, width, selected))
     return out
@@ -559,13 +591,23 @@ def _wide_body(state, snap, rows, width, available, color, scroll=0):
     left_width = width - right_width
     window = _window(rows, page, available, 1)
 
-    left = [truncate(flight_header(left_width), left_width), rule(left_width, left_width - 1)]
-    for row in window:
-        selected = row["id"] == page.selected_id
-        if state.current in FLIGHT_PAGES:
+    if state.current in FLIGHT_PAGES:
+        left = [truncate(flight_header(left_width), left_width),
+                rule(left_width, left_width - 1)]
+        for row in window:
+            selected = row["id"] == page.selected_id
             left.extend(flight_row(row["record"], left_width, color, selected))
-        else:
-            left.append(truncate(f"{'> ' if selected else '  '}{row['code']}", left_width))
+    elif state.current == ALERTS:
+        left = [truncate(alert_header(left_width), left_width),
+                rule(left_width, left_width - 1)]
+        for row in window:
+            selected = row["id"] == page.selected_id
+            left.append(alert_line(row["record"], left_width, color, selected))
+    else:
+        left = [truncate("  AIRLINES", left_width), rule(left_width, left_width - 1)]
+        for row in window:
+            selected = row["id"] == page.selected_id
+            left.append(airline_line(row, left_width, selected))
 
     right = []
     if state.current in FLIGHT_PAGES:

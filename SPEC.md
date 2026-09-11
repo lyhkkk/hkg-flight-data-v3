@@ -18,7 +18,7 @@ hkg_flight/
   utils.py       pure helpers: dates, status mapping, normalization, text safety
   api.py         HKIA REST client with serialized rate limiting
   cache.py       atomic on-disk JSON cache
-  alerts.py      gate/stand change detection and the alert lifecycle
+  alerts.py      gate/stand divergence detection (first allocation is silent)
   poller.py      one worker thread; publishes immutable flight snapshots
   cli.py         argument parsing, one-shot queries, entry point
   web.py         HTTP server + single-page dashboard
@@ -101,23 +101,36 @@ stat is unavailable.
 
 ### 4.2 Change detection
 
-Flights are tracked per `{date}_{flight_number}` key. Only **gate** and
-**stand** changes raise alerts:
+Flights are tracked per `{date}_{flight_number}` key. An alert marks a flight
+whose **gate** or **stand** has moved away from the value it was originally
+assigned. The first allocation is the baseline, not news — every flight gets a
+gate, so alerting on it would produce hundreds of rows a day. Only a later
+divergence alerts:
 
 ```
-⚠ CX759 GATE: 62 → 63
-⚠ CX759 STAND: W62 → W63
+N24 -> -        released    (the position was withdrawn)
+N24 -> S47      changed     (moved to a different position)
+N24 -> - -> S47 released then re-assigned -> shown as N24 -> S47
 ```
 
-An alert persists while the flight is still pending and is cleared once the
-status becomes boarding / departed / arrived / landed / cancelled.
+An alert shows the flight's **original** assignment next to its current value,
+so a released-then-re-assigned flight reads `N24 -> S47`, never `- -> S47`. A
+flight that returns to its baseline (`N24 -> S47 -> N24`) is no longer
+divergent, so its alert clears. So does a flight that departs, lands or is
+cancelled — its position is no longer actionable.
+
+Alerts are stored newest-first and capped at 500. Alerts whose date is not the
+current data date are dropped on load and on every refresh, so a long-running
+process does not accumulate yesterday's rows.
 
 ### 4.3 Alert lifecycle
 
-The manager exposes a monotonic read-only `alerts_revision()` that advances
-whenever the active set changes; the UI polls that counter rather than sharing
-a mutable flag. `snapshot()` returns per-alert copies, so the poller thread can
-keep updating the live set without disturbing a caller that already read it.
+The manager is written by exactly one thread (the poller) and read by many (the
+web handler threads and the UI), so a single lock guards the list. It exposes a
+monotonic read-only `alerts_revision()` that advances whenever the set changes;
+the UI polls that counter rather than sharing a mutable flag. `snapshot()`
+returns per-alert copies, so the poller thread can keep updating the live set
+without disturbing a caller that already read it.
 
 ### 4.4 Poller
 
@@ -183,10 +196,12 @@ ANSI colour everywhere.
 
 ### 5.6 Alert view
 
-Active alerts newest-first, searchable by flight, changed field, before/after
-values and status. `Enter` links to the flight detail when the flight is still
-in the current data, otherwise the alert's own snapshot is shown. Counts are
-always the active count, not an unread count.
+Gate/stand divergences newest-first, as an aligned table: when the change was
+seen, the flight, the field and its before/after values, and the current status.
+Searchable by flight, changed field, before/after values and status. `Enter`
+links to the flight detail when the flight is still in the current data,
+otherwise the alert's own snapshot is shown. Counts are always the live alert
+count, not an unread count.
 
 The web server is toggled from the workbench with `w`; its status shows OFF /
 ON / ERROR. A busy port reports ERROR, never a false ON.
@@ -198,11 +213,13 @@ ON / ERROR. A busy port reports ERROR, never a false ON.
 | `/` | GET | Dashboard (dark theme, HKIA accent `#faa718`) |
 | `/api/flights?date=&type=&terminal=&status=` | GET | Flights for a date |
 | `/api/search?flight=&date=` | GET | Search flights |
-| `/api/alerts` | GET | Active alerts |
-| `/api/stats` | GET | Server statistics |
+| `/api/alerts` | GET | Gate/stand divergences, newest first |
+| `/api/stats` | GET | Feed health (source, date, flight/alert counts) |
 | `/api/airlines` | GET | Airline list |
 
-The dashboard auto-refreshes every 30 s.
+The dashboard is a single self-contained page with two views — flights and
+gate/stand changes — and refreshes itself every 30 s. Rendering happens in the
+browser; the server only ever sends JSON.
 
 ## 7. CLI
 
@@ -237,7 +254,7 @@ hkg-flight-data-v3/
 ├── tests/                  # unittest suite + offline fixtures
 ├── docs/archive/           # Historical design notes and review reports
 ├── test_hkg_flight.py      # Core regression suite
-└── cleanup_alerts.py       # Alert maintenance utility
+└── cleanup_alerts.py       # Inspect / clear the alert cache
 ```
 
 ## 9. Dependencies

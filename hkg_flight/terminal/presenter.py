@@ -188,6 +188,13 @@ def alert_identity(alert):
     )
 
 
+def alert_change_text(alert):
+    """The divergence itself, e.g. ``62 → 63`` / ``N24 → —`` (released)."""
+    old = str(alert.get("old_value") or "") or "—"
+    new = str(alert.get("new_value") or "") or "—"
+    return f"{old} → {new}"
+
+
 def alert_rows(alerts, search_text):
     """Project + filter alerts into ``{"id", "record"}`` rows."""
     tokens = tokenize(search_text)

@@ -25,7 +25,7 @@ python -m hkg_flight departures 2026-09-07
 python -m hkg_flight arrivals
 python -m hkg_flight arrivals 2026-09-07
 
-# 查看告警
+# 查看门/廊桥变动（首次分配不告警，仅 release / change 告警）
 python -m hkg_flight alerts
 
 # 清除缓存
@@ -105,12 +105,25 @@ python -m hkg_flight web -p 9000
 | `arrivals` | 每次调用 API 获取最新数据 |
 | `alerts` | 读取本地缓存（不调用 API） |
 
+### 告警规则
+
+告警只标记"**偏离最初分配**"的门/廊桥。首次分配是基线，不算变化——每个正常航班都会分到机位，若为此告警，一天会产生几百条噪音：
+
+```
+N24 -> -         释放（机位被收回）      → 告警
+N24 -> S47       改到其他机位            → 告警
+N24 -> - -> S47  释放后重新分配          → 告警，显示为 N24 -> S47
+-   -> N24       首次分配                → 不告警
+N24 -> S47 -> N24  回到原机位            → 清除该告警
+```
+
+告警始终显示"原始分配 → 当前值"。航班起飞 / 降落 / 取消后，其告警自动清除。
+
 ### 缓存机制
 
-代码有缓存机制：
-- **今日数据**：缓存 5 分钟
-- **历史数据**：缓存 24 小时
-- **航空公司数据**：缓存 24 小时
+- **航班数据**：无 TTL。每次请求都直接访问 API，成功结果写穿到 `flights_YYYY-MM-DD.json`；API 失败时由轮询器回退读取该文件。
+- **航空公司数据**：缓存 24 小时（`--force` 可绕过）。
+- **告警**：写入 `alerts.json`（最新在前，上限 500，仅保留当前数据日期）。
 
 ### 如何强制刷新
 
@@ -128,7 +141,7 @@ python -m hkg_flight --force web
 ```
 
 注意：`--force` 是全局选项，必须写在子命令之前（`--force web`，而非 `web --force`）。
-`--force` 只对本次运行绕过航司缓存读取；航班请求本身直接访问 API，轮询失败时仍可使用航班缓存。它不会删除缓存文件（包括 alerts.json 告警历史）。
+`--force` 只对本次运行绕过航司缓存读取；航班请求本身直接访问 API，轮询失败时仍可使用航班缓存。它不会删除缓存文件（包括 alerts.json 告警列表）。
 
 或者清除特定日期的缓存：
 
@@ -153,7 +166,7 @@ positional arguments:
     query               Search for a flight by number
     departures          List departures
     arrivals            List arrivals
-    alerts              Show active alerts
+    alerts              Show gate/stand changes away from the original assignment
     clear-cache         Clear cached data
     web                 Start web server
     tui                 Start TUI interface
@@ -176,8 +189,8 @@ options:
 | `/` | GET | Web UI 界面 |
 | `/api/flights?date=YYYY-MM-DD` | GET | 获取航班列表 |
 | `/api/search?flight=CX759` | GET | 搜索航班 |
-| `/api/alerts` | GET | 获取活跃告警 |
-| `/api/stats` | GET | 获取服务器统计 |
+| `/api/alerts` | GET | 获取门/廊桥变动（按时间倒序） |
+| `/api/stats` | GET | 获取数据源健康状态（来源 / 日期 / 航班与告警数量） |
 | `/api/airlines` | GET | 获取航空公司列表 |
 
 ---
@@ -186,8 +199,9 @@ options:
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `HKG_CACHE_DIR` | 缓存目录 | `~/.hkg_flight_cache` |
-| `HKG_WEB_PORT` | Web 服务器端口 | `8080` |
+| `NO_COLOR` | 设置后禁用彩色输出（终端工作台） | 未设置（即启用颜色） |
+
+缓存目录用 `--cache-dir`，Web 端口用 `web --port` / `tui --port`，均无环境变量开关。
 
 ---
 

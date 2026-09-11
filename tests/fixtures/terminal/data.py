@@ -84,7 +84,7 @@ def make_flights(count, date=DEFAULT_DATE):
 
 
 def make_alert(index, date=DEFAULT_DATE):
-    """Build one active alert dict."""
+    """Build one gate/stand divergence alert."""
     flight = make_flight(index, date=date)
     field = "GATE" if index % 2 == 0 else "STAND"
     if field == "GATE":
@@ -101,6 +101,7 @@ def make_alert(index, date=DEFAULT_DATE):
         "old_value": "62" if field == "GATE" else "W62",
         "new_value": new_value,
         "status": flight["status"],
+        "status_category": flight["status_category"],
         "raised_at": f"2026-09-09T{23 - (index % 24):02d}:{59 - (index % 60):02d}:00",
     }
 

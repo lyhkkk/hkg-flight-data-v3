@@ -231,6 +231,16 @@ class TestBodyLines(unittest.TestCase):
             for line in lines:
                 self.assertLessEqual(views.text_width(line), 100)
 
+    def test_wide_tier_alerts_and_airlines(self):
+        """The wide split layout must render every page, not just flights."""
+        for page in (ALERTS, AIRLINES):
+            state, snap = self.build(current=page)
+            state.detail_id = "anything"
+            lines = views.body_lines(state, snap, 130, 30, False)
+            self.assertTrue(lines, page)
+            for line in lines:
+                self.assertLessEqual(views.text_width(line), 130)
+
 
 if __name__ == "__main__":
     unittest.main()

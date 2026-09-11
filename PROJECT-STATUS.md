@@ -2,7 +2,43 @@
 
 > 最后更新: 2026-09-11
 
-## 项目状态: ✅ 已通过第一性原理重构，测试与 lint 全绿
+## 项目状态: ✅ 告警规则与 Web 已重制，测试与 lint 全绿
+
+## 本轮重制 — 2026-09-11（告警 + Web）
+
+### 背景
+
+旧告警规则是 `old_value != new_value and new_value`，把**首次分配**当成变化。
+每个正常航班都会分到机位，一天几百个航班就产生几百条告警，信号被噪音淹没；
+而真正的 **release**（`N24 -> -`）反而被漏掉。CLI、TUI、Web 三个前端共用这套规则。
+
+### 新规则（`alerts.py` 重写）
+
+以"**原始分配**"为基线：首次分配不告警，之后的 release / change 才告警。
+
+| 序列 | 结果 |
+|---|---|
+| `- -> N24`（首次分配） | 不告警 |
+| `N24 -> -`（release） | 告警 `N24 -> —` |
+| `N24 -> S47`（change） | 告警 `N24 -> S47` |
+| `N24 -> - -> S47`（释放后重分配） | 告警 `N24 -> S47`（保留原始基线） |
+| `N24 -> S47 -> N24`（回到原值） | 清除告警 |
+| 航班 departed / landed / cancelled | 清除该航班全部告警 |
+
+- 告警记录形如 `{key, flight_number, date, time, type, field, old_value, new_value, status, status_category, raised_at}`，`old_value` 恒为原始分配值。
+- 上限 500 条、最新在前；`retain_date()` 在每次刷新时清掉非当前数据日期的告警。
+- 删除 active/history 双表：历史仅被测试与清理脚本消费，属于无消费者的设计。`alerts.json` 现在就是一个列表。
+
+### 前端重制
+
+- **TUI 告警页**：从裸文本行改为对齐表格 `CHANGED / FLIGHT / CHANGE / STATUS`，状态按类别着色；详情页显示变动 + 当前航班信息。
+- **CLI `alerts`**：复用同一 `views` 渲染（不再另写一套），输出与工作台一致。
+- **Web**：单页仪表盘重写，双视图（Flights / Gate·Stand Changes），状态药丸、数据源健康指示、30 秒自动刷新；`/api/stats` 扩展为数据源健康（来源 / 日期 / 航班与告警数量）。
+
+### 顺带修复的失实文档
+
+- `COMMANDS.md` 的 `HKG_CACHE_DIR` / `HKG_WEB_PORT` 两个环境变量在代码中不存在（只有 `NO_COLOR`）——已更正。
+- `COMMANDS.md` 声称"今日数据缓存 5 分钟 / 历史数据 24 小时"——实际航班数据无 TTL，每次直连 API 并写穿缓存；只有航司元数据有 24 小时 TTL。已更正。
 
 ## 环境信息
 
@@ -10,11 +46,11 @@
 |------|------|
 | Python | 3.9+（基础包），3.11 / 3.13 为 CI 目标 |
 | 依赖 | 基础包仅标准库；`.[tui]` 可选引入 Textual |
-| 测试 | 222 用例通过（5 skipped：未安装 Textual 时的增强 UI 测试） |
+| 测试 | 228 用例通过（5 skipped：未安装 Textual 时的增强 UI 测试） |
 | Lint | `ruff check .` 全部通过 |
 | 数据源连接 | ✅ 实测（今日 417 departures / 415 arrivals） |
 
-## 本轮重构 — 2026-09-11
+## 历史重构 — 2026-09-11（第一性原理）
 
 ### 背景
 
@@ -72,21 +108,29 @@
 ```bash
 python -m compileall -q hkg_flight tests cleanup_alerts.py test_hkg_flight.py   # OK
 python -m ruff check .                                                          # All checks passed
-python -m unittest discover -s . -p "test*.py"                                  # 222 tests, OK (skipped=5)
+python -m unittest discover -s . -p "test*.py"                                  # 228 tests, OK (skipped=5)
 ```
 
-真实 API 冒烟（2026-09-11）：`departures` 417 条、`arrivals` 415 条、
-`query CX261` / `query G63` / `query BA15` 三种模式行为正确，Web API 与 plain 非 TTY 输出正常。
+本轮另做了 Web 端到端冒烟：起服务器 → `/` 返回仪表盘 → `/api/alerts` 返回
+`CX759 GATE 62 → 63` → `/api/stats` 报告 `source=api, flights=1, alerts=1`。
 
 ## 已知问题
 
 - 增强 UI 需要 `.[tui]`；未安装时相关测试自动跳过，本地无法验证 Textual 交互
 - 40 列紧凑布局的可读性仍需真实终端人工确认
 - 香港业务日期语义（Asia/Hong_Kong 统一）仍为独立待决项
-- 告警历史保存时限制最近 500 条，可用 `cleanup_alerts.py` 按日期清理
+- 告警上限 500 条、按当前数据日期清理，`cleanup_alerts.py` 现在只用于手工查看/清空
 
 ## 后续建议
 
 - [ ] 在装有 Textual 的环境跑一次增强 UI 测试与真机交互
 - [ ] 如需跨重启的变更检测，重新设计 state 持久化（当前仅进程内快照）
-- [ ] 考虑给 Web 仪表盘增加告警视图
+- [x] ~~考虑给 Web 仪表盘增加告警视图~~ —— 已完成
+
+## 待用户裁定的移除项
+
+以下设计已无消费者，建议删除（本轮未擅自删除）：
+
+- `cleanup_alerts.py`：告警已自动限流 + 按日期清理，`clear-cache` 也能清 alerts.json，该脚本已无职责
+- `state.py` 的 `state.message` / `lost_selection_id` / `SELECTION_LOST_MESSAGE`：被写入但没有任何前端渲染，只有测试在断言
+- `presenter.STATUS_FILTERS` 中未被 `STATUS_COLORS` 覆盖的项（`estimated` 等）——待确认是否仍需筛选入口

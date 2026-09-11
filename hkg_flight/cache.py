@@ -5,7 +5,7 @@ On-disk cache under ``~/.hkg_flight_cache``:
 
   flights_YYYY-MM-DD.json  raw HKIA API response per date
   airlines.json            airline metadata
-  alerts.json              active alerts + retained history
+  alerts.json              gate/stand divergence alerts, newest first
 
 Writes are atomic (temp file + ``os.replace``). Reads never raise: a missing or
 corrupt file is simply a cache miss.
@@ -130,19 +130,14 @@ class CacheSystem:
 
     # -- alerts ----------------------------------------------------------
     def read_alerts(self):
-        data = self._read_json(self.alerts_path, {})
-        if not isinstance(data, dict):
-            data = {}
-        active = data.get("active", [])
-        history = data.get("history", [])
-        return {
-            "active": active if isinstance(active, list) else [],
-            "history": history if isinstance(history, list) else [],
-        }
+        """Alert list, newest first. Tolerates the legacy ``{active, history}``."""
+        data = self._read_json(self.alerts_path, [])
+        if isinstance(data, dict):
+            data = data.get("active", [])
+        if not isinstance(data, list):
+            return []
+        return [alert for alert in data if isinstance(alert, dict)]
 
-    def write_alerts(self, alert_data):
+    def write_alerts(self, alerts):
         with self.lock:
-            self._write_json(self.alerts_path, {
-                "active": alert_data.get("active", []),
-                "history": alert_data.get("history", []),
-            })
+            self._write_json(self.alerts_path, list(alerts))

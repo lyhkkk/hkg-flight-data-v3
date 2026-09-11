@@ -18,6 +18,7 @@ from .presenter import (
     AIRLINES,
     DEPARTURES,
     ARRIVALS,
+    alert_change_text,
     detail_lines,
 )
 from . import views
@@ -97,6 +98,7 @@ def render_block(session, page_name, search, offset, page_size=DEFAULT_PAGE_SIZE
             lines.extend(views.flight_row(row["record"], width))
     elif page_name == ALERTS:
         lines.append(_title(session, page_name, search, len(rows)))
+        lines.append(views.alert_header(width))
         lines.append(views.rule(width))
         for row in window:
             lines.append(views.alert_line(row["record"], width))
@@ -214,10 +216,9 @@ def _print_detail(session, page, search, offset, number, out, page_size=DEFAULT_
             out(f"{label}: {value}")
     elif page == ALERTS:
         alert = rows[index]["record"]
-        out("{} {}: {} -> {} | {}".format(
+        out("{} {} {} | {}".format(
             alert.get("flight_number", "?"), alert.get("field", "?"),
-            alert.get("old_value", ""), alert.get("new_value", ""),
-            alert.get("status", "")))
+            alert_change_text(alert), alert.get("status", "")))
     else:
         out("Detail is available for flight and alert pages")
 

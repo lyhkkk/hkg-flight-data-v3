@@ -1,70 +1,74 @@
 """
 HKG Flight Data v3 - Alert Manager.
 
-Tracks gate/stand changes and manages the alert lifecycle:
+An alert marks a flight whose gate or stand has moved **away from the value it
+was originally assigned**. The first allocation is the baseline, not news:
+every normal flight gets a gate, so alerting on it would bury the signal under
+hundreds of rows a day. Only a later divergence is an alert:
 
-  gate/stand change detected
-    -> alert raised (active set grows, revision advances)
-    -> alert persists while the flight is still pending
-    -> alert cleared once the flight is boarding/departed/arrived/landed/cancelled
+    N24 -> -         released   (the position was withdrawn)
+    N24 -> S47       changed    (moved to a different position)
+    N24 -> - -> S47  released then re-assigned -> shown as ``N24 -> S47``
 
-Readers poll ``alerts_revision()``; they never share a mutable flag with the
-manager. ``snapshot()`` returns per-alert copies, so the poller thread may keep
-updating the live set without disturbing a caller that already read it.
+A flight that returns to its baseline (``N24 -> S47 -> N24``) is no longer
+divergent, so its alert clears. So does a flight that departs, lands or is
+cancelled: its position is no longer actionable.
+
+The manager is written by exactly one thread (the poller) and read by many
+(the web handler threads and the UI), so a single lock guards the alert list.
+Alerts are stored newest-first and capped at :data:`MAX_ALERTS`.
 """
 
 import threading
 from datetime import datetime
 
+from .utils import status_category, today_str
 
-MAX_HISTORY = 500
 
-# Statuses that end an alert's life.
-_CLEARING_STATUSES = ("departed", "landed", "arrived", "cancelled")
+MAX_ALERTS = 500
+
+# Status categories that end a flight's life: its gate/stand stops mattering.
+_CLOSED_CATEGORIES = ("departed", "landed", "cancelled")
+
+
+def _category(rec):
+    """Stable status category for a record, tolerating raw status strings."""
+    return status_category(rec.get("status_category") or rec.get("status"))
 
 
 class AlertManager:
-    """Gate/stand change detection with an active set and a retained history."""
+    """Gate/stand divergence tracking, newest first."""
 
     def __init__(self, cache=None):
         self.cache = cache
-        self.lock = threading.RLock()
+        self.lock = threading.Lock()
         self._revision = 0
-        self._alerts = {"active": [], "history": []}
-        if cache is not None:
-            stored = cache.read_alerts()
-            self._alerts = {
-                "active": stored.get("active", []),
-                "history": stored.get("history", []),
-            }
+        self._alerts = []
+        # (key, field) -> the value the flight was first assigned. In memory
+        # only: a restart re-establishes baselines from the first snapshot,
+        # which is exactly what the process-local diff model can support.
+        self._baseline = {}
 
-    # -- persistence -----------------------------------------------------
-    def save(self):
-        """Persist alerts, retaining only the most recent history entries."""
-        with self.lock:
-            history = self._alerts.setdefault("history", [])
-            if len(history) > MAX_HISTORY:
-                del history[:-MAX_HISTORY]
-            if self.cache is not None:
-                self.cache.write_alerts(self._alerts)
+        if cache is not None:
+            today = today_str()
+            self._alerts = [
+                a for a in cache.read_alerts() if str(a.get("date", "")) >= today
+            ]
+            for alert in self._alerts:
+                self._baseline[(alert.get("key"), alert.get("field"))] = alert.get("old_value", "")
 
     # -- reads -----------------------------------------------------------
     def active_count(self):
         with self.lock:
-            return len(self._alerts.get("active", []))
+            return len(self._alerts)
 
     def get_active(self):
-        """Copy of the active alerts (each alert is a fresh dict)."""
+        """Copy of the alerts, newest first (each alert is a fresh dict)."""
         with self.lock:
-            return [dict(alert) for alert in self._alerts.get("active", [])]
-
-    def get_history(self):
-        """Copy of the retained alert history."""
-        with self.lock:
-            return [dict(alert) for alert in self._alerts.get("history", [])]
+            return [dict(alert) for alert in self._alerts]
 
     def alerts_revision(self):
-        """Monotonic counter that advances whenever the active set changes."""
+        """Monotonic counter that advances whenever the alert set changes."""
         with self.lock:
             return self._revision
 
@@ -73,75 +77,121 @@ class AlertManager:
         with self.lock:
             return {
                 "revision": self._revision,
-                "alerts": [dict(alert) for alert in self._alerts.get("active", [])],
+                "alerts": [dict(alert) for alert in self._alerts],
             }
 
     # -- change detection ------------------------------------------------
     def process_flight(self, old, new):
-        """Compare two states of one flight and raise/clear alerts."""
+        """Compare two states of one flight and raise/clear its alerts."""
         if not old or not new:
             return
 
         key = new.get("key", "")
-        new_status = str(new.get("status", "")).lower()
+        if _category(new) in _CLOSED_CATEGORIES:
+            self._drop_key(key)
+            return
 
         for field in ("gate", "stand"):
-            old_value = old.get(field, "")
-            new_value = new.get(field, "")
-            if old_value != new_value and new_value:
-                self._upsert(
-                    key=key,
-                    flight_number=new.get("flight_number", ""),
-                    date=new.get("date", ""),
-                    time=new.get("time", ""),
-                    flight_type=new.get("type", ""),
-                    field=field.upper(),
-                    old_value=old_value,
-                    new_value=new_value,
-                    status=new.get("status", ""),
-                )
+            self._process_field(key, field, old, new)
 
-        if any(s in new_status for s in _CLEARING_STATUSES):
-            self._clear_for_key(key)
+    def retain_date(self, date_str):
+        """Drop alerts that do not belong to ``date_str`` (called per refresh)."""
+        if not date_str:
+            return
+        with self.lock:
+            kept = [a for a in self._alerts if a.get("date", "") == date_str]
+            if len(kept) == len(self._alerts):
+                return
+            self._alerts = kept
+            self._baseline = {p: v for p, v in self._baseline.items() if p[0].startswith(date_str)}
+            self._revision += 1
+            payload = [dict(a) for a in self._alerts]
+        self._persist(payload)
 
-    def _upsert(self, key, flight_number, date, time, flight_type,
-                field, old_value, new_value, status):
-        """Create the alert, or refresh it when one already exists."""
+    def _process_field(self, key, field, old, new):
+        """Track one field (gate or stand) of one flight."""
+        old_value = str(old.get(field) or "")
+        new_value = str(new.get(field) or "")
+        if old_value == new_value:
+            return
+
+        pair = (key, field.upper())
+        baseline = self._baseline.get(pair)
+
+        if baseline is None:
+            # No recorded assignment yet: the previous value is the best
+            # baseline available, and an empty previous value means this is the
+            # first allocation - silent by design.
+            if not old_value:
+                if new_value:
+                    self._baseline[pair] = new_value
+                return
+            baseline = old_value
+            self._baseline[pair] = baseline
+
+        if new_value == baseline:
+            self._resolve(pair)
+        else:
+            self._raise(pair, key, field, baseline, new_value, new)
+
+    # -- mutations -------------------------------------------------------
+    def _raise(self, pair, key, field, baseline, new_value, rec):
+        """Create or refresh the alert for ``pair`` and move it to the front."""
         now = datetime.now().isoformat(timespec="seconds")
         with self.lock:
-            for alert in self._alerts.get("active", []):
-                if alert.get("key") == key and alert.get("field") == field:
-                    alert["old_value"] = old_value
+            for index, alert in enumerate(self._alerts):
+                if (alert.get("key"), alert.get("field")) == pair:
                     alert["new_value"] = new_value
-                    alert["status"] = status
+                    alert["status"] = rec.get("status", "")
+                    alert["status_category"] = _category(rec)
                     alert["raised_at"] = now
-                    self._revision += 1
-                    self.save()
-                    return
-
-            self._alerts.setdefault("active", []).append({
-                "key": key,
-                "flight_number": flight_number,
-                "date": date,
-                "time": time,
-                "type": flight_type,
-                "field": field,
-                "old_value": old_value,
-                "new_value": new_value,
-                "status": status,
-                "raised_at": now,
-            })
+                    if index:
+                        self._alerts.insert(0, self._alerts.pop(index))
+                    break
+            else:
+                self._alerts.insert(0, {
+                    "key": key,
+                    "flight_number": rec.get("flight_number", ""),
+                    "date": rec.get("date", ""),
+                    "time": rec.get("time", ""),
+                    "type": rec.get("type", ""),
+                    "field": field.upper(),
+                    "old_value": baseline,
+                    "new_value": new_value,
+                    "status": rec.get("status", ""),
+                    "status_category": _category(rec),
+                    "raised_at": now,
+                })
+                del self._alerts[MAX_ALERTS:]
             self._revision += 1
-            self.save()
+            payload = [dict(a) for a in self._alerts]
+        self._persist(payload)
 
-    def _clear_for_key(self, key):
-        """Move every active alert for ``key`` into the history."""
+    def _resolve(self, pair):
+        """The flight returned to its baseline: its alert no longer applies."""
         with self.lock:
-            active = self._alerts.get("active", [])
-            cleared = [a for a in active if a.get("key") == key]
-            if not cleared:
+            kept = [a for a in self._alerts if (a.get("key"), a.get("field")) != pair]
+            if len(kept) == len(self._alerts):
                 return
-            self._alerts["active"] = [a for a in active if a.get("key") != key]
-            self._alerts.setdefault("history", []).extend(cleared)
+            self._alerts = kept
             self._revision += 1
-            self.save()
+            payload = [dict(a) for a in self._alerts]
+        self._persist(payload)
+
+    def _drop_key(self, key):
+        """Remove every alert and baseline for a flight (it has departed)."""
+        with self.lock:
+            kept = [a for a in self._alerts if a.get("key") != key]
+            for pair in [p for p in self._baseline if p[0] == key]:
+                del self._baseline[pair]
+            if len(kept) == len(self._alerts):
+                return
+            self._alerts = kept
+            self._revision += 1
+            payload = [dict(a) for a in self._alerts]
+        self._persist(payload)
+
+    def _persist(self, payload):
+        """Write the alert list through to the cache (never raises)."""
+        if self.cache is not None:
+            self.cache.write_alerts(payload)

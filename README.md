@@ -78,7 +78,7 @@ python -m hkg_flight arrivals
 # List arrivals for a specific date
 python -m hkg_flight arrivals 2026-08-16
 
-# Show active gate/stand change alerts
+# Show gate/stand changes away from the original assignment
 python -m hkg_flight alerts
 
 # Clear cache
@@ -132,6 +132,28 @@ line-command fallback is used: `1/2/5/6`, `n`/`p`, `/ <terms>`, `detail <N>`,
 `r`, `w`, `help`, `q`. Plain mode never emits ANSI color codes; set `NO_COLOR`
 to keep statuses as text in every backend.
 
+## Gate / Stand Alerts
+
+An alert marks a flight whose gate or stand has moved away from the value it
+was **originally assigned**. The first allocation is the baseline, not news —
+every flight gets a gate, so alerting on it would produce hundreds of rows a
+day. Only a later divergence alerts:
+
+```
+N24 -> -         released   (the position was withdrawn)
+N24 -> S47       changed    (moved to a different position)
+N24 -> - -> S47  released then re-assigned -> shown as N24 -> S47
+```
+
+An alert always shows the flight's original assignment next to its current
+value, so a released-then-re-assigned flight reads `N24 -> S47`. A flight that
+returns to its baseline (`N24 -> S47 -> N24`) clears its alert, as does one that
+departs, lands or is cancelled. Alerts are newest-first, capped at 500, and
+scoped to the current data date.
+
+View them with `python -m hkg_flight alerts`, on the workbench's page `5`, or in
+the web dashboard's "Gate / Stand Changes" tab.
+
 ## Web Dashboard
 
 Start it with:
@@ -140,8 +162,9 @@ Start it with:
 python -m hkg_flight web [--port N]
 ```
 
-The dashboard is available at `http://127.0.0.1:PORT` (default `8080`). It
-auto-refreshes every 30 seconds and exposes JSON API endpoints such as:
+The dashboard is available at `http://127.0.0.1:PORT` (default `8080`). It is a
+single self-contained page with two views — flights and gate/stand changes —
+and refreshes itself every 30 seconds. It exposes JSON API endpoints such as:
 
 - `/api/flights`
 - `/api/search`
@@ -154,10 +177,10 @@ Press `Ctrl+C` in the terminal to stop the web server.
 ## Cache
 
 Flight data is cached under `~/.hkg_flight_cache/`. The cache is used as a
-fallback when the live HKIA API is unavailable, and it stores alert state and
-polling history. The global `--force` option bypasses cached airline metadata
-for that run; it does not delete cache files, and polling may still fall back
-to cached flight data when the API is unavailable.
+fallback when the live HKIA API is unavailable, and it stores the current alert
+list. The global `--force` option bypasses cached airline metadata for that run;
+it does not delete cache files, and polling may still fall back to cached flight
+data when the API is unavailable.
 
 ## Verification
 

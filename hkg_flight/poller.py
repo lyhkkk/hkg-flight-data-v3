@@ -149,12 +149,14 @@ class Poller:
 
             # Alert detection runs outside the lock against the previous
             # baseline. It only sees records, never the live snapshot.
-            if records is not None and self.alert_manager is not None and previous:
-                old_map = {r.get("key"): r for r in previous}
-                for new_rec in records:
-                    old_rec = old_map.get(new_rec.get("key"))
-                    if old_rec is not None:
-                        self.alert_manager.process_flight(old_rec, new_rec)
+            if records is not None and self.alert_manager is not None:
+                self.alert_manager.retain_date(date_str)
+                if previous:
+                    old_map = {r.get("key"): r for r in previous}
+                    for new_rec in records:
+                        old_rec = old_map.get(new_rec.get("key"))
+                        if old_rec is not None:
+                            self.alert_manager.process_flight(old_rec, new_rec)
         except Exception as exc:
             log(f"Refresh error: {exc}")
             with self._cond:
