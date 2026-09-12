@@ -7,10 +7,12 @@ from hkg_flight.terminal.presenter import (
     ARRIVALS,
     alert_rows,
     airline_rows,
+    anchor_index,
     detail_lines,
     duplicate_ordinals,
     matches_filters,
     row_identity,
+    row_minutes,
     tokenize,
     visible_rows,
 )
@@ -162,6 +164,125 @@ class TestDetailLines(unittest.TestCase):
         rec = next(r for r in make_flights(20) if "|" in r["all_flight_numbers"])
         labels = dict(detail_lines(rec))
         self.assertIn("Codeshare", labels)
+
+
+class TestAnchorIndexAcrossDates(unittest.TestCase):
+    """A board that spans midnight: the anchor is a ``(date, time)`` position.
+
+    Rows are ordered by ``(date, time)``, so comparing time-of-day alone parks
+    the viewport on yesterday's flight at the same hour - a whole day in the
+    past, which is what the 22:00-01:59 window would otherwise show.
+    """
+
+    PREV = "2026-09-11"
+    DAY = "2026-09-12"
+    NEXT = "2026-09-13"
+
+    @classmethod
+    def rows(cls, *day_times):
+        return [{"id": "%s %s" % (day, time), "record": {"date": day, "time": time}}
+                for day, time in day_times]
+
+    def board(self):
+        """Yesterday and today - the window at 01:30 in the morning."""
+        return self.rows((self.PREV, "01:30"), (self.PREV, "08:00"), (self.PREV, "23:50"),
+                         (self.DAY, "01:30"), (self.DAY, "08:00"), (self.DAY, "23:50"))
+
+    def test_the_date_is_what_stops_the_anchor_falling_a_day_behind(self):
+        # The negative control for the test below: with no date, the very same
+        # rows anchor on yesterday's 08:00.
+        self.assertEqual(anchor_index(self.board(), 8 * 60), 1)
+
+    def test_the_anchor_lands_on_todays_row_of_the_same_hour(self):
+        self.assertEqual(anchor_index(self.board(), 8 * 60, self.DAY), 4)
+        self.assertEqual(anchor_index(self.board(), 1 * 60 + 30, self.DAY), 3)
+        self.assertEqual(anchor_index(self.board(), 0, self.DAY), 3)
+
+    def test_a_time_before_todays_first_row_lands_on_todays_first_row(self):
+        rows = self.rows((self.DAY, "08:00"), (self.DAY, "09:00"))
+        self.assertEqual(anchor_index(rows, 0, self.DAY), 0)
+
+    def test_todays_last_row_wins_over_an_earlier_hour_tomorrow(self):
+        # At 23:30 the next flight is today's 23:50, not tomorrow's 00:05: the
+        # list is ordered by date first, and so is the anchor.
+        rows = self.rows((self.DAY, "23:50"), (self.NEXT, "00:05"))
+        self.assertEqual(anchor_index(rows, 23 * 60 + 30, self.DAY), 0)
+
+    def test_tomorrow_is_reachable_once_today_is_exhausted(self):
+        rows = self.rows((self.DAY, "23:50"), (self.NEXT, "00:05"))
+        self.assertEqual(anchor_index(rows, 23 * 60 + 55, self.DAY), 1)
+
+    def test_everything_in_the_past_still_returns_the_end(self):
+        self.assertEqual(anchor_index(self.board(), 23 * 60 + 55, self.DAY), 6)
+
+    def test_a_row_with_no_date_belongs_to_the_day_being_anchored(self):
+        # The payload omitted the date, the schedule did not; refusing the row
+        # over a missing field would take a flight off the board.
+        rows = [{"id": "x", "record": {"time": "08:00"}}]
+        self.assertEqual(anchor_index(rows, 7 * 60, self.DAY), 0)
+        self.assertEqual(anchor_index(rows, 9 * 60, self.DAY), 1)
+
+    def test_a_board_of_one_date_behaves_exactly_as_before(self):
+        # Passing the date must not change a one-date board: every row is on
+        # that date, so the comparison reduces to the time.
+        rows = self.rows((self.DAY, "08:00"), (self.DAY, "09:30"), (self.DAY, "11:00"))
+        for minutes in (0, 8 * 60, 9 * 60 + 31, 23 * 60):
+            self.assertEqual(anchor_index(rows, minutes),
+                             anchor_index(rows, minutes, self.DAY), minutes)
+
+
+class TestAnchorIndex(unittest.TestCase):
+    """The anchor is the earliest row at or after the clock - and nothing else."""
+
+    @staticmethod
+    def rows(*times):
+        return [{"id": "r%d" % i, "record": {"time": t}}
+                for i, t in enumerate(times)]
+
+    def test_finds_the_first_row_at_or_after_the_clock(self):
+        rows = self.rows("08:00", "09:30", "11:00", "13:45")
+        self.assertEqual(anchor_index(rows, 0), 0)
+        self.assertEqual(anchor_index(rows, 9 * 60 + 30), 1)
+        self.assertEqual(anchor_index(rows, 9 * 60 + 31), 2)
+
+    def test_a_row_exactly_on_the_clock_counts(self):
+        self.assertEqual(anchor_index(self.rows("12:00"), 12 * 60), 0)
+
+    def test_everything_in_the_past_returns_the_end(self):
+        # The caller clamps to the tail, so a board with nothing left shows its
+        # last flights rather than an empty screen.
+        rows = self.rows("01:00", "02:00")
+        self.assertEqual(anchor_index(rows, 23 * 60), 2)
+
+    def test_an_empty_list_returns_zero(self):
+        self.assertEqual(anchor_index([], 12 * 60), 0)
+
+    def test_rows_without_a_readable_time_are_skipped(self):
+        rows = self.rows("", "garbage", "25:00", "12:60", "10:00")
+        self.assertEqual(anchor_index(rows, 9 * 60), 4)
+
+    def test_a_row_without_a_time_never_becomes_the_anchor(self):
+        # Those rows sort to the front (their sort key is ""), so the anchor
+        # must scan rather than trust the order.
+        self.assertEqual(anchor_index(self.rows("", "13:00"), 12 * 60), 1)
+
+    def test_row_minutes_reads_a_well_formed_time(self):
+        self.assertEqual(row_minutes({"time": "07:05"}), 7 * 60 + 5)
+        self.assertEqual(row_minutes({"time": " 07:05 "}), 7 * 60 + 5)
+        self.assertEqual(row_minutes({"time": "00:00"}), 0)
+        self.assertEqual(row_minutes({"time": "23:59"}), 23 * 60 + 59)
+
+    def test_row_minutes_reads_an_unpadded_time(self):
+        # A real departure time either way; refusing it over its padding would
+        # take a flight off the board.
+        self.assertEqual(row_minutes({"time": "7:05"}), 7 * 60 + 5)
+        self.assertEqual(row_minutes({"time": "7:5"}), 7 * 60 + 5)
+
+    def test_row_minutes_rejects_anything_else(self):
+        for bad in ("", "   ", "12", "12:", "abc", "25:00", "12:60",
+                    "-1:00", "1:234", "12:5x", None, 705):
+            self.assertIsNone(row_minutes({"time": bad}), bad)
+        self.assertIsNone(row_minutes({}))
 
 
 if __name__ == "__main__":

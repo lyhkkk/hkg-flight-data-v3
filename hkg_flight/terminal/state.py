@@ -16,6 +16,8 @@ from .presenter import (
     AIRLINES,
     DEPARTURES,
     STATUS_FILTERS,
+    anchor_index,
+    row_minutes,
 )
 
 # Set on ``state.message`` when reconcile cannot find the previously selected
@@ -34,6 +36,14 @@ class PageState(object):
         self.selected_id = None
         self.selected_index = 0
         self.offset = 0
+        # Time anchor, flight pages only. ``anchor_auto`` means the top of the
+        # list keeps following the board's clock; the first manual move or step
+        # pins it, and the anchor then records where it was pinned (for
+        # display). Minutes since midnight, HKT, plus the service date they
+        # belong to - a board that spans midnight needs both to name a moment.
+        self.anchor_minutes = None
+        self.anchor_date = None
+        self.anchor_auto = True
 
 
 class AppState(object):
@@ -82,7 +92,40 @@ def _select_index(state, rows, index, height=None):
             page.offset = index - height + 1
 
 
-def reconcile(state, rows):
+def _park_index(state, rows, index):
+    """Put row ``index`` at the top of the viewport and select it.
+
+    Setting the offset and the selection together is what makes the parked row
+    the *first visible* one: the renderer derives its window from the two and
+    would otherwise pull the viewport back to wherever the selection was.
+    """
+    page = _page(state)
+    if not rows:
+        page.selected_id = None
+        page.selected_index = 0
+        page.offset = 0
+        return
+    index = max(0, min(index, len(rows) - 1))
+    page.offset = index
+    page.selected_index = index
+    page.selected_id = rows[index]["id"]
+
+
+def park(state, rows, minutes, date=None):
+    """Put the first row at/after ``minutes`` (HKT) at the top of the viewport.
+
+    Everything already in the past clamps to the last row, so a board with no
+    remaining flights shows its tail rather than an empty screen. ``date`` is
+    the service date the clock is on, and is only needed on a board that spans
+    midnight - see :func:`presenter.anchor_index`.
+    """
+    page = _page(state)
+    page.anchor_minutes = minutes
+    page.anchor_date = date
+    _park_index(state, rows, anchor_index(rows, minutes, date))
+
+
+def reconcile(state, rows, anchor=None, anchor_date=None):
     """Re-clamp selection/offset after rows changed (page switch, search, refresh).
 
     Selection is matched by **stable entity id**, never by position alone, so a
@@ -94,8 +137,18 @@ def reconcile(state, rows):
     the flight is no longer available, and the lost id is recorded in
     ``state.lost_selection_id``. Another flight's id is never reused to paper
     over the disappearance.
+
+    ``anchor`` is the board's current time in minutes since midnight, and
+    ``anchor_date`` the service date it belongs to. When they are supplied and
+    the page still follows the clock, the viewport parks on the first flight at
+    or after them instead of matching the previous selection by id - the whole
+    point of following the clock is that the view moves, so a stale id must not
+    hold it in place.
     """
     page = _page(state)
+    if anchor is not None and page.anchor_auto:
+        park(state, rows, anchor, anchor_date)
+        return
     n = len(rows)
     if n == 0:
         page.selected_id = None
@@ -162,9 +215,16 @@ def _close_overlay(state):
     state.focus = "list"
 
 
-def dispatch(state, rows, action):
-    """Reduce an action into (new_state, commands). ``rows`` is the current
-    page's visible row list (list of ``{"id", "record"}``)."""
+def dispatch(state, rows, action, anchor=None, anchor_date=None):
+    """Reduce an action into (new_state, commands).
+
+    ``rows`` is the current page's visible row list (list of
+    ``{"id", "record"}``). ``anchor`` is the board's current time in minutes
+    since midnight, and ``anchor_date`` the service date it belongs to, for
+    pages that follow the clock; ``None`` means "leave the viewport where it
+    is" (which is also the default, so a caller that has no clock - the plain
+    adapter, tests - keeps the previous behaviour).
+    """
     commands = []
     kind = action.get("type", "")
 
@@ -172,7 +232,7 @@ def dispatch(state, rows, action):
         name = action["page"]
         if name in ALL_PAGES and name != state.current:
             _switch_page(state, name)
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
 
     elif kind == "move":
         page = _page(state)
@@ -193,13 +253,18 @@ def dispatch(state, rows, action):
         elif direction == "pgdn":
             delta = height or 10
         elif direction == "home":
+            page.anchor_auto = False
             _select_index(state, rows, 0, height)
             return state, commands
         elif direction == "end":
+            page.anchor_auto = False
             _select_index(state, rows, n - 1, height)
             return state, commands
         else:
             return state, commands
+        # Moving the viewport is the user taking over: the clock stops dragging
+        # the list back to "now" on every refresh. ``t`` hands it back.
+        page.anchor_auto = False
         _select_index(state, rows, page.selected_index + delta, height)
 
     elif kind == "slash":
@@ -212,25 +277,25 @@ def dispatch(state, rows, action):
         if state.focus == "search":
             page = _page(state)
             page.search_text += action.get("char", "")
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
 
     elif kind == "search_backspace":
         if state.focus == "search":
             page = _page(state)
             page.search_text = page.search_text[:-1]
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
 
     elif kind == "search_submit":
         if state.focus == "search":
             state.focus = "list"
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
 
     elif kind == "search_cancel":
         if state.focus == "search":
             page = _page(state)
             page.search_text = page.search_pre_edit
             state.focus = "list"
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
 
     elif kind == "tab":
         if state.detail_id:
@@ -247,7 +312,7 @@ def dispatch(state, rows, action):
         page = _page(state)
         if state.focus == "search":
             state.focus = "list"
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
         elif state.focus == "filter":
             state.filter_open = False
             state.focus = "list"
@@ -274,15 +339,15 @@ def dispatch(state, rows, action):
         if state.focus == "search":
             page.search_text = page.search_pre_edit
             state.focus = "list"
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
         elif _has_overlay(state):
             _close_overlay(state)
         elif _has_filter(page):
             _clear_filters(state, page)
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
         elif state.current in AUX_PAGES:
             _switch_page(state, state.return_page)
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
 
     elif kind == "toggle_filter":
         if state.detail_id:
@@ -299,11 +364,36 @@ def dispatch(state, rows, action):
             index = options.index(current) if current in options else 0
             index = (index + (1 if direction == "next" else -1)) % len(options)
             page.status_filter = options[index]
-            reconcile(state, rows)
+            reconcile(state, rows, anchor, anchor_date)
 
     elif kind == "help":
         state.help_open = not state.help_open
         state.focus = "help" if state.help_open else "list"
+
+    elif kind == "anchor_now":
+        # Hand the viewport back to the clock.
+        if state.current in FLIGHT_PAGES:
+            _page(state).anchor_auto = True
+            park(state, rows, action.get("minutes"), action.get("date"))
+
+    elif kind == "anchor_step":
+        page = _page(state)
+        if state.current in FLIGHT_PAGES and rows:
+            # One "screen" is ``capacity`` rows. Stepping the *offset* by that
+            # much is what makes the next screen start where the last one
+            # ended; stepping the selection instead would let the renderer's
+            # keep-the-selection-visible rule pull the viewport back to within
+            # a row of where it already was.
+            capacity = max(1, int(action.get("capacity") or 1))
+            delta = capacity if action.get("direction") == "next" else -capacity
+            page.anchor_auto = False
+            _park_index(state, rows, page.offset + delta)
+            # Record where the viewport landed, date included: stepping off the
+            # end of today lands on tomorrow, and "Pinned 00:05" would not say
+            # which night that is.
+            top = rows[page.offset]["record"]
+            page.anchor_minutes = row_minutes(top)
+            page.anchor_date = top.get("date") or None
 
     elif kind == "refresh":
         commands.append("refresh")

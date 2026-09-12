@@ -10,13 +10,14 @@ import re
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta
 
 from hkg_flight.alerts import AlertManager
 from hkg_flight.cache import CacheSystem
 from hkg_flight.terminal import views
-from hkg_flight.terminal.presenter import DEPARTURES, ARRIVALS, ALERTS
+from hkg_flight.terminal.presenter import DEPARTURES, ARRIVALS, ALERTS, anchor_index
 from hkg_flight.terminal.session import Session
-from hkg_flight.utils import today_str
+from hkg_flight.utils import HKT, today_str
 
 HAS_TEXTUAL = importlib.util.find_spec("textual") is not None
 
@@ -25,16 +26,30 @@ if HAS_TEXTUAL:
 
 TODAY = today_str()
 
+
+def at(minutes, day=TODAY):
+    """A fixed HKT clock reading, so no test depends on the hour it runs at."""
+    hour, minute = divmod(minutes, 60)
+    year, month, day_of_month = (int(part) for part in day.split("-"))
+    return datetime(year, month, day_of_month, hour, minute, tzinfo=HKT)
+
+
+def shift_day(date_str, days):
+    """``date_str`` moved by ``days``, in the same YYYY-MM-DD form."""
+    year, month, day = (int(part) for part in date_str.split("-"))
+    return (datetime(year, month, day, tzinfo=HKT)
+            + timedelta(days=days)).date().isoformat()
+
 # The longest status the HKIA feed produces; its parenthesised date is what
 # used to wrap onto a row of its own on a phone screen.
 LONG_STATUS = "At gate 23:47 (06/09/2026)"
 
 
-def raw_payload(count=30, status="Scheduled"):
+def raw_payload(count=30, status="Scheduled", date_str=TODAY):
     entries = []
     for i in range(count):
         entries.append({
-            "arrival": i % 2 == 1, "cargo": False, "date": TODAY,
+            "arrival": i % 2 == 1, "cargo": False, "date": date_str,
             "list": [{"flight": [{"airline": "CPA", "no": f"CX {100 + i}"}],
                       "time": f"{i % 24:02d}:{(i * 7) % 60:02d}",
                       "status": status,
@@ -46,11 +61,15 @@ def raw_payload(count=30, status="Scheduled"):
 
 
 class FakeAPI:
-    def __init__(self, status="Scheduled"):
+    def __init__(self, status="Scheduled", count=30):
         self.status = status
+        self.count = count
 
     def fetch_flights(self, date_str):
-        return raw_payload(status=self.status)
+        # The requested date is what the payload is *about*. A board that spans
+        # midnight fetches two dates, and returning the same day for both would
+        # hide exactly the bug the window is here to expose.
+        return raw_payload(count=self.count, status=self.status, date_str=date_str)
 
     def fetch_airlines_meta(self):
         return {"airlines": [{"code": "CX", "description": ["Cathay"]}],
@@ -148,19 +167,31 @@ def screen_lines(app):
     return lines
 
 
-def build_session(status="Scheduled"):
+def build_session(status="Scheduled", count=30, clock=None, reconcile=True):
+    """A session as the front-ends get one.
+
+    ``reconcile=False`` mirrors the real start-up order: ``Session.start()``
+    does not touch the UI state, so nothing has anchored the list by the time
+    the app mounts - the app has to do it itself.
+    """
     cache = CacheSystem(tempfile.mkdtemp())
-    session = Session(cache=cache, api=FakeAPI(status=status),
-                      alert_manager=AlertManager(cache), no_poll=True)
-    session.poller.refresh_today()
-    session.reconcile()
+    kwargs = {"no_poll": True}
+    if clock is not None:
+        kwargs["clock"] = clock
+    session = Session(cache=cache, api=FakeAPI(status=status, count=count),
+                      alert_manager=AlertManager(cache), **kwargs)
+    session.poller.refresh_now()
+    if reconcile:
+        session.reconcile()
     return session
 
 
 @unittest.skipUnless(HAS_TEXTUAL, "Textual is not installed")
 class TestTextualApp(unittest.TestCase):
     def setUp(self):
-        self.session = build_session()
+        # A fixed clock: the anchor is derived from it, so a real one would
+        # make these tests pass or fail depending on the hour they ran at.
+        self.session = build_session(clock=lambda: at(9 * 60))
 
     def tearDown(self):
         self.session.close()
@@ -189,14 +220,168 @@ class TestTextualApp(unittest.TestCase):
         asyncio.run(scenario())
 
     def test_navigation_keys_move_the_selection(self):
+        """The cursor moves one row per press, wherever the clock parked it."""
         async def scenario():
             app = FlightBoardApp(self.session)
             async with app.run_test() as pilot:
+                page = self.session.state.pages[DEPARTURES]
+                rows = self.session.rows_for(DEPARTURES)
+                # The list opens on the first flight at or after the board's
+                # clock, not on row 0, so only the movement is fixed here.
+                start = page.selected_index
                 await pilot.press("down")
                 await pilot.press("down")
-                self.assertEqual(self.session.state.pages[DEPARTURES].selected_index, 2)
+                self.assertEqual(page.selected_index, min(start + 2, len(rows) - 1))
+                self.assertFalse(page.anchor_auto)
 
         asyncio.run(scenario())
+
+    def render_row(self, row, page, width):
+        """A row as the plain-text lines the screen should carry for it."""
+        return [views.strip_tags(line) for line in views.flight_row(
+            row["record"], width, color=False,
+            selected=row["id"] == page.selected_id,
+            compact=views.is_compact(width))]
+
+    def test_the_board_opens_on_the_flights_that_are_current_now(self):
+        """A 09:00 board starts at the first flight after 09:00, not at row 0."""
+        session = build_session(count=200, clock=lambda: at(9 * 60), reconcile=False)
+        try:
+            async def scenario():
+                app = FlightBoardApp(session)
+                async with app.run_test(size=(100, 24)) as pilot:
+                    await pilot.pause()
+                    page = session.state.pages[DEPARTURES]
+                    rows = session.rows_for(DEPARTURES)
+                    # The fixture has to leave room on both sides, or the
+                    # assertion would hold even if the anchor were ignored.
+                    self.assertGreater(page.offset, 0)
+                    self.assertLess(page.offset, len(rows) - 1)
+                    self.assertTrue(page.anchor_auto)
+                    screen = [views.strip_tags(line) for line in screen_lines(app)]
+                    for line in self.render_row(rows[page.offset], page, app.size.width):
+                        self.assertIn(line, screen)
+                    for line in self.render_row(rows[page.offset - 1], page,
+                                                app.size.width):
+                        self.assertNotIn(line, screen)
+
+            asyncio.run(scenario())
+        finally:
+            session.close()
+
+    def test_the_page_keys_step_one_screen_from_the_clock(self):
+        session = build_session(count=200, clock=lambda: at(9 * 60), reconcile=False)
+        try:
+            async def scenario():
+                app = FlightBoardApp(session)
+                async with app.run_test(size=(100, 24)) as pilot:
+                    await pilot.pause()
+                    page = session.state.pages[DEPARTURES]
+                    rows = session.rows_for(DEPARTURES)
+                    capacity = views.row_capacity(session.state, rows,
+                                                  app.size.width, app.size.height)
+                    self.assertGreater(capacity, 1)
+                    start = page.offset
+                    self.assertLess(start + capacity, len(rows))
+
+                    await pilot.press("right_square_bracket")
+                    self.assertEqual(page.offset, start + capacity)
+                    self.assertFalse(page.anchor_auto)
+
+                    await pilot.press("left_square_bracket")
+                    self.assertEqual(page.offset, start)
+
+                    await pilot.press("t")
+                    self.assertTrue(page.anchor_auto)
+                    self.assertEqual(page.offset, start)
+
+            asyncio.run(scenario())
+        finally:
+            session.close()
+
+    def test_a_board_opened_after_midnight_does_not_open_on_yesterday(self):
+        """01:30: the board carries yesterday too, and must still open on today.
+
+        This is the end-to-end form of the anchor's date: the same rows, the
+        same renderer, and a viewport that would sit a whole day in the past if
+        the anchor compared times of day alone.
+        """
+        yesterday = shift_day(TODAY, -1)
+        session = build_session(count=200, clock=lambda: at(1 * 60 + 30),
+                                reconcile=False)
+        try:
+            async def scenario():
+                app = FlightBoardApp(session)
+                async with app.run_test(size=(100, 24)) as pilot:
+                    await pilot.pause()
+                    snap = session.snapshot()["flights"]
+                    self.assertEqual(snap["records_dates"], [yesterday, TODAY])
+
+                    page = session.state.pages[DEPARTURES]
+                    rows = session.rows_for(DEPARTURES)
+                    self.assertEqual(rows[page.offset]["record"]["date"], TODAY)
+                    # Yesterday really is on the board, at the top of it...
+                    self.assertEqual(rows[0]["record"]["date"], yesterday)
+                    # ...and the date-blind anchor would have stopped there.
+                    blind = anchor_index(rows, 1 * 60 + 30)
+                    self.assertEqual(rows[blind]["record"]["date"], yesterday)
+                    self.assertNotEqual(blind, page.offset)
+
+                    # And it is what the screen actually shows.
+                    screen = [views.strip_tags(line) for line in screen_lines(app)]
+                    for line in self.render_row(rows[page.offset], page, app.size.width):
+                        self.assertIn(line, screen)
+
+            asyncio.run(scenario())
+        finally:
+            session.close()
+
+    def test_a_landed_refresh_carries_the_clock_anchor_with_it(self):
+        now = [at(9 * 60)]
+        session = build_session(count=200, clock=lambda: now[0], reconcile=False)
+        try:
+            async def scenario():
+                app = FlightBoardApp(session)
+                async with app.run_test(size=(100, 24)) as pilot:
+                    await pilot.pause()
+                    page = session.state.pages[DEPARTURES]
+                    rows = session.rows_for(DEPARTURES)
+                    self.assertEqual(page.offset, anchor_index(rows, 9 * 60, TODAY))
+
+                    # Time passes while the board is open. The next refresh has
+                    # to move the list with it, or the board would still be
+                    # showing the morning's flights.
+                    now[0] = at(15 * 60)
+                    session.poller.refresh_now()
+                    await asyncio.sleep(0.45)
+                    self.assertTrue(page.anchor_auto)
+                    self.assertEqual(page.offset, anchor_index(rows, 15 * 60, TODAY))
+
+            asyncio.run(scenario())
+        finally:
+            session.close()
+
+    def test_a_landed_refresh_leaves_a_pinned_page_where_the_user_left_it(self):
+        now = [at(9 * 60)]
+        session = build_session(count=200, clock=lambda: now[0], reconcile=False)
+        try:
+            async def scenario():
+                app = FlightBoardApp(session)
+                async with app.run_test(size=(100, 24)) as pilot:
+                    await pilot.pause()
+                    page = session.state.pages[DEPARTURES]
+                    await pilot.press("right_square_bracket")
+                    pinned = page.offset
+                    self.assertFalse(page.anchor_auto)
+
+                    now[0] = at(15 * 60)
+                    session.poller.refresh_now()
+                    await asyncio.sleep(0.45)
+                    self.assertEqual(page.offset, pinned)
+
+            asyncio.run(scenario())
+        finally:
+            session.close()
 
     def test_help_overlay_toggles(self):
         async def scenario():

@@ -7,11 +7,12 @@ through public interfaces; no test reaches into poller/session internals.
 """
 
 import os
+import re
 import shutil
 import tempfile
 import time
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from hkg_flight import cli
 from hkg_flight.alerts import AlertManager
@@ -21,12 +22,15 @@ from hkg_flight.poller import Poller
 from hkg_flight.terminal import views
 from hkg_flight.utils import (
     DEFAULT_WIDTH,
+    HKT,
     MAX_WIDTH,
+    board_dates,
     clean_text,
     gate_stand_text,
     make_flight_key,
     normalize_flight_number,
     normalize_flights,
+    now_hkt,
     route_text,
     sort_flights,
     status_category,
@@ -37,6 +41,23 @@ from hkg_flight.utils import (
 from hkg_flight.web import WebServer
 
 TODAY = today_str()
+
+
+def clock_at(hour, minute=0, day=None):
+    """A fixed HKT clock reading, so no assertion depends on the wall clock.
+
+    Tests that let the real clock decide whether the board spans one service
+    date or two only pass outside the 22:00-01:59 band.
+    """
+    date_str = day or TODAY
+    year, month, day_of_month = (int(part) for part in date_str.split("-"))
+    return datetime(year, month, day_of_month, hour, minute, tzinfo=HKT)
+
+
+def shift_day(date_str, days):
+    """``date_str`` moved by ``days``, in the same YYYY-MM-DD form."""
+    year, month, day_of_month = (int(part) for part in date_str.split("-"))
+    return (date(year, month, day_of_month) + timedelta(days=days)).isoformat()
 
 
 def payload(no, gate=None, stand=None, status="Scheduled", arrival=False,
@@ -56,21 +77,29 @@ def payload(no, gate=None, stand=None, status="Scheduled", arrival=False,
 
 
 class FakeAPI:
-    """Minimal APIClient stand-in: serves a fixed payload or raises."""
+    """Minimal APIClient stand-in: serves a fixed payload or raises.
+
+    ``data`` is either one payload for every date, or a ``{date: payload}``
+    mapping. A board that spans midnight asks for two dates, and the two days
+    have to be distinguishable or the merge cannot be checked.
+    """
 
     def __init__(self, data=None, fail=False, cache=None):
         self.data = data
         self.fail = fail
         self.cache = cache
         self.calls = 0
+        self.dates = []
 
     def fetch_flights(self, date_str):
         self.calls += 1
+        self.dates.append(date_str)
         if self.fail:
             raise RuntimeError("network down")
-        if self.data is not None and self.cache is not None:
-            self.cache.write_flights(date_str, self.data)
-        return self.data
+        payload = self.data.get(date_str) if isinstance(self.data, dict) else self.data
+        if payload is not None and self.cache is not None:
+            self.cache.write_flights(date_str, payload)
+        return payload
 
     def fetch_airlines_meta(self):
         return {"airlines": [{"code": "CX", "description": ["Cathay"]}],
@@ -141,6 +170,52 @@ class TestUtils(unittest.TestCase):
         }
         for raw, expected in cases.items():
             self.assertEqual(status_category(raw), expected, raw)
+
+
+class TestBoardDates(unittest.TestCase):
+    """The window rule: which service dates the board covers, and when.
+
+    The clock is injected everywhere, so these assertions hold at any hour the
+    suite happens to run.
+    """
+
+    @staticmethod
+    def at(hour, minute=0, day=11):
+        return datetime(2026, 9, day, hour, minute, tzinfo=HKT)
+
+    def test_one_date_in_the_middle_of_the_day(self):
+        for hour in (2, 12, 21):
+            self.assertEqual(board_dates(self.at(hour)), ["2026-09-11"], hour)
+
+    def test_the_late_band_carries_tomorrow(self):
+        # At 23:30 the next flights to leave are tomorrow's.
+        self.assertEqual(board_dates(self.at(22)), ["2026-09-11", "2026-09-12"])
+        self.assertEqual(board_dates(self.at(23, 59)), ["2026-09-11", "2026-09-12"])
+
+    def test_the_early_band_carries_yesterday(self):
+        # At 01:30 the flights that just left are yesterday's.
+        self.assertEqual(board_dates(self.at(0, 0, day=12)), ["2026-09-11", "2026-09-12"])
+        self.assertEqual(board_dates(self.at(1, 59, day=12)), ["2026-09-11", "2026-09-12"])
+
+    def test_the_band_edges_are_exact(self):
+        # 21:59 is still a one-date board; 02:00 has already dropped yesterday.
+        self.assertEqual(board_dates(self.at(21, 59)), ["2026-09-11"])
+        self.assertEqual(board_dates(self.at(2, 0, day=12)), ["2026-09-12"])
+
+    def test_the_window_always_contains_today_and_is_ordered(self):
+        for hour in range(24):
+            dates = board_dates(self.at(hour, 30))
+            self.assertIn("2026-09-11", dates, hour)
+            self.assertEqual(dates, sorted(dates), hour)
+            self.assertLessEqual(len(dates), 2, hour)
+
+    def test_the_window_never_reaches_further_than_one_day(self):
+        for hour in range(24):
+            for date_str in board_dates(self.at(hour, 30)):
+                self.assertIn(date_str, ("2026-09-10", "2026-09-11", "2026-09-12"), hour)
+
+    def test_defaults_to_the_real_clock(self):
+        self.assertIn(today_str(), board_dates())
 
 
 # ------------------------------------------------------------------- cache
@@ -273,8 +348,9 @@ class TestAlertManager(TempCacheCase):
         self.alerts = AlertManager(cache=self.cache)
 
     @staticmethod
-    def flight(gate="62", stand="", status="Scheduled"):
-        return {"key": f"{TODAY}_DEP_CX759", "flight_number": "CX759", "date": TODAY,
+    def flight(gate="62", stand="", status="Scheduled", day=None):
+        date_str = day or TODAY
+        return {"key": f"{date_str}_DEP_CX759", "flight_number": "CX759", "date": date_str,
                 "time": "08:40", "type": "departure", "gate": gate, "stand": stand,
                 "status": status}
 
@@ -356,10 +432,42 @@ class TestAlertManager(TempCacheCase):
             self.alerts.process_flight(old, new)
         self.assertLessEqual(self.alerts.active_count(), 500)
 
-    def test_retain_date_drops_other_days(self):
+    def test_retain_dates_drops_other_days(self):
         self.alerts.process_flight(self.flight(gate="62"), self.flight(gate="63"))
-        self.alerts.retain_date("2020-01-01")
+        self.alerts.retain_dates(["2020-01-01"])
         self.assertEqual(self.alerts.active_count(), 0)
+
+    def test_retain_dates_keeps_every_date_in_the_window(self):
+        # A board that spans midnight carries two service dates; dropping
+        # either one would delete alerts for flights still on screen.
+        yesterday = "2020-01-01"
+        for day in (yesterday, TODAY):
+            self.alerts.process_flight(self.flight(gate="62", day=day),
+                                       self.flight(gate="63", day=day))
+        self.alerts.retain_dates([yesterday, TODAY])
+        self.assertEqual(self.alerts.active_count(), 2)
+
+    def test_retain_dates_keeps_the_baseline_of_a_surviving_alert(self):
+        # The baseline is what makes a *later* change visible. Pruning it while
+        # keeping the alert would make the flight look freshly allocated and
+        # swallow its next move - the alert would report the wrong original.
+        yesterday = "2020-01-01"
+        self.alerts.process_flight(self.flight(gate="62", day=yesterday),
+                                   self.flight(gate="63", day=yesterday))
+        self.alerts.retain_dates([yesterday])
+        self.alerts.process_flight(self.flight(gate="63", day=yesterday),
+                                   self.flight(gate="64", day=yesterday))
+        active = self.alerts.get_active()
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["old_value"], "62")
+        self.assertEqual(active[0]["new_value"], "64")
+
+    def test_retain_dates_with_nothing_to_keep_is_a_no_op(self):
+        # An empty window means "no information", not "drop everything".
+        self.alerts.process_flight(self.flight(gate="62"), self.flight(gate="63"))
+        self.alerts.retain_dates([])
+        self.alerts.retain_dates([""])
+        self.assertEqual(self.alerts.active_count(), 1)
 
     def test_alerts_persist_across_instances(self):
         self.alerts.process_flight(self.flight(gate="62"), self.flight(gate="63"))
@@ -442,35 +550,140 @@ class TestAPIClient(TempCacheCase):
 # ------------------------------------------------------------------ poller
 
 class TestPoller(TempCacheCase):
-    def make(self, data=None, fail=False, **kw):
+    def make(self, data=None, fail=False, clock=None, **kw):
         api = FakeAPI(data, fail, cache=self.cache)
-        return Poller(cache=self.cache, api=api, alert_manager=AlertManager(self.cache), **kw), api
+        return Poller(cache=self.cache, api=api, alert_manager=AlertManager(self.cache),
+                      clock=clock or (lambda: clock_at(12)), **kw), api
 
     def test_first_refresh_publishes_a_snapshot(self):
         poller, _ = self.make([payload("CX 759", gate="63")])
-        records = poller.refresh_today()
+        records = poller.refresh_now()
         self.assertEqual(len(records), 1)
         snap = poller.snapshot()
         self.assertEqual(snap["source"], "api")
         self.assertEqual(snap["records_date"], TODAY)
+        self.assertEqual(snap["records_dates"], [TODAY])
         self.assertEqual(snap["revision"], 1)
         self.assertIsNone(snap["last_error"])
         self.assertFalse(snap["refreshing"])
 
     def test_snapshot_contains_the_expected_keys(self):
         poller, _ = self.make([payload("CX759")])
-        poller.refresh_today()
+        poller.refresh_now()
         self.assertEqual(set(poller.snapshot()), {
-            "revision", "records_date", "records", "source", "last_attempt_at",
-            "last_api_success_at", "cache_saved_at", "last_error", "polling_enabled",
-            "refreshing",
+            "revision", "records_date", "records_dates", "records", "source",
+            "last_attempt_at", "last_api_success_at", "cache_saved_at", "last_error",
+            "polling_enabled", "refreshing",
         })
+
+    def test_a_midday_board_fetches_one_date(self):
+        poller, api = self.make([payload("CX759")])
+        poller.refresh_now()
+        self.assertEqual(api.dates, [TODAY])
+        self.assertEqual(poller.snapshot()["records_dates"], [TODAY])
+
+    def test_a_late_board_fetches_today_and_tomorrow(self):
+        tomorrow = shift_day(TODAY, 1)
+        poller, api = self.make(
+            {TODAY: [payload("CX759", date_str=TODAY)],
+             tomorrow: [payload("UO612", date_str=tomorrow)]},
+            clock=lambda: clock_at(23, 30))
+        poller.refresh_now()
+        snap = poller.snapshot()
+        self.assertEqual(api.dates, [TODAY, tomorrow])
+        self.assertEqual(snap["records_dates"], [TODAY, tomorrow])
+        # The board's own date stays today: the window is what is covered, not
+        # what the board is centred on.
+        self.assertEqual(snap["records_date"], TODAY)
+        self.assertEqual(sorted(r["date"] for r in snap["records"]), [TODAY, tomorrow])
+
+    def test_an_early_board_fetches_yesterday_and_today(self):
+        yesterday = shift_day(TODAY, -1)
+        poller, api = self.make(
+            {yesterday: [payload("CX759", date_str=yesterday)],
+             TODAY: [payload("UO612", date_str=TODAY)]},
+            clock=lambda: clock_at(1, 0))
+        poller.refresh_now()
+        snap = poller.snapshot()
+        self.assertEqual(api.dates, [yesterday, TODAY])
+        self.assertEqual(snap["records_dates"], [yesterday, TODAY])
+        self.assertEqual(snap["records_date"], TODAY)
+        self.assertEqual(sorted(r["date"] for r in snap["records"]), [yesterday, TODAY])
+
+    def test_a_date_leaves_the_board_when_the_window_moves_on(self):
+        tomorrow = shift_day(TODAY, 1)
+        clock = {"now": clock_at(23, 30)}
+        poller, _ = self.make(
+            {TODAY: [payload("CX759", date_str=TODAY)],
+             tomorrow: [payload("UO612", date_str=tomorrow)]},
+            clock=lambda: clock["now"])
+        poller.refresh_now()
+        self.assertEqual(len(poller.snapshot()["records"]), 2)
+
+        # 09:00 the next morning: only the new "today" is still current, and the
+        # day that dropped out of the window must leave the board with it.
+        clock["now"] = clock_at(9, day=tomorrow)
+        poller.refresh_now()
+        snap = poller.snapshot()
+        self.assertEqual(snap["records_dates"], [tomorrow])
+        self.assertEqual([r["date"] for r in snap["records"]], [tomorrow])
+
+    def test_a_partly_cached_window_is_not_reported_as_live(self):
+        tomorrow = shift_day(TODAY, 1)
+        poller, api = self.make({TODAY: [payload("CX759", date_str=TODAY)]},
+                                clock=lambda: clock_at(23, 30))
+        poller.refresh_now()
+        self.assertEqual(poller.snapshot()["source"], "api")
+
+        # Tomorrow is on disk from an earlier run and the API can no longer
+        # serve it: the board is half remembered, so it must not say "api".
+        self.cache.write_flights(tomorrow, [payload("UO612", date_str=tomorrow)])
+        api.data = {TODAY: [payload("CX759", date_str=TODAY)], tomorrow: None}
+        poller.refresh_now()
+        snap = poller.snapshot()
+        self.assertEqual(snap["source"], "cache")
+        self.assertEqual(snap["records_dates"], [TODAY, tomorrow])
+        self.assertEqual(sorted(r["date"] for r in snap["records"]), [TODAY, tomorrow])
+
+    def test_one_date_failing_still_leaves_the_other_on_the_board(self):
+        tomorrow = shift_day(TODAY, 1)
+        poller, api = self.make({TODAY: [payload("CX759", date_str=TODAY)]},
+                                clock=lambda: clock_at(23, 30))
+
+        class OneDateDown(FakeAPI):
+            def fetch_flights(self, date_str):
+                if date_str == tomorrow:
+                    raise RuntimeError("only tomorrow is down")
+                return super().fetch_flights(date_str)
+
+        poller.api = OneDateDown({TODAY: [payload("CX759", date_str=TODAY)]},
+                                 cache=self.cache)
+        poller.refresh_now()
+        snap = poller.snapshot()
+        self.assertEqual(snap["records_dates"], [TODAY, tomorrow])
+        self.assertEqual([r["date"] for r in snap["records"]], [TODAY])
+        self.assertIsNotNone(snap["last_error"])
+
+    def test_alerts_from_both_days_survive_a_refresh(self):
+        yesterday = shift_day(TODAY, -1)
+        poller, api = self.make(
+            {yesterday: [payload("CX759", gate="62", date_str=yesterday)],
+             TODAY: [payload("UO612", gate="62", date_str=TODAY)]},
+            clock=lambda: clock_at(1, 0))
+        poller.refresh_now()
+        api.data = {
+            yesterday: [payload("CX759", gate="63", date_str=yesterday)],
+            TODAY: [payload("UO612", gate="63", date_str=TODAY)],
+        }
+        poller.refresh_now()
+        active = poller.alert_manager.get_active()
+        self.assertEqual(sorted(a["date"] for a in active), [yesterday, TODAY])
 
     def test_gate_change_raises_an_alert_through_the_poller(self):
         poller, api = self.make([payload("CX 759", gate="62")])
-        poller.refresh_today()
+        poller.refresh_now()
         api.data = [payload("CX 759", gate="63")]
-        poller.refresh_today()
+        poller.refresh_now()
         active = poller.alert_manager.get_active()
         self.assertEqual(len(active), 1)
         self.assertEqual(active[0]["new_value"], "63")
@@ -483,14 +696,14 @@ class TestPoller(TempCacheCase):
             payload("UA 820", gate="62", destination=["BKK"]),
             payload("UA 820", arrival=True, stand="W63", origin=["LAX"]),
         ])
-        poller.refresh_today()
+        poller.refresh_now()
 
         api.data = [
             payload("UA 820", gate="63", destination=["BKK"]),
             payload("UA 820", arrival=True, stand="W63", origin=["LAX"],
                     status="Landed"),
         ]
-        poller.refresh_today()
+        poller.refresh_now()
 
         active = poller.alert_manager.get_active()
         self.assertEqual(len(active), 1)
@@ -499,9 +712,9 @@ class TestPoller(TempCacheCase):
 
     def test_failed_api_falls_back_to_cache(self):
         poller, api = self.make([payload("CX 759", gate="62")])
-        poller.refresh_today()
+        poller.refresh_now()
         api.fail = True
-        poller.refresh_today()
+        poller.refresh_now()
         snap = poller.snapshot()
         self.assertEqual(snap["source"], "cache")
         self.assertEqual(len(snap["records"]), 1)
@@ -510,17 +723,17 @@ class TestPoller(TempCacheCase):
 
     def test_failed_api_without_cache_keeps_memory_data(self):
         poller, api = self.make([payload("CX 759")])
-        poller.refresh_today()
+        poller.refresh_now()
         self.cache.clear_flights(TODAY)
         api.fail = True
-        poller.refresh_today()
+        poller.refresh_now()
         snap = poller.snapshot()
         self.assertEqual(snap["source"], "memory")
         self.assertEqual(len(snap["records"]), 1)
 
     def test_no_data_at_all_reports_none(self):
         poller, _ = self.make(None, fail=True)
-        poller.refresh_today()
+        poller.refresh_now()
         snap = poller.snapshot()
         self.assertEqual(snap["source"], "none")
         self.assertEqual(snap["records"], [])
@@ -528,10 +741,10 @@ class TestPoller(TempCacheCase):
 
     def test_failed_refresh_still_advances_the_revision(self):
         poller, api = self.make([payload("CX759")])
-        poller.refresh_today()
+        poller.refresh_now()
         before = poller.revision()
         api.fail = True
-        poller.refresh_today()
+        poller.refresh_now()
         self.assertGreater(poller.revision(), before)
 
     def test_request_refresh_coalesces(self):
@@ -548,8 +761,8 @@ class TestPoller(TempCacheCase):
 
     def test_records_are_isolated_between_reads(self):
         poller, _ = self.make([payload("CX759")])
-        poller.refresh_today()
-        self.assertIsNot(poller.today_records, poller.today_records)
+        poller.refresh_now()
+        self.assertIsNot(poller.board_records, poller.board_records)
         self.assertIsNot(poller.snapshot()["records"], poller.snapshot()["records"])
 
     def test_background_start_refreshes_once(self):
@@ -580,10 +793,28 @@ class TestWebServer(TempCacheCase):
     def setUp(self):
         super().setUp()
         self.api = FakeAPI([payload("CX 759", gate="63")], cache=self.cache)
+        # A fixed clock: with a real one the poller covers two service dates
+        # between 22:00 and 02:00 and the counts below would change with the hour.
         self.poller = Poller(cache=self.cache, api=self.api,
-                             alert_manager=AlertManager(self.cache))
-        self.poller.refresh_today()
+                             alert_manager=AlertManager(self.cache),
+                             clock=lambda: clock_at(12))
+        self.poller.refresh_now()
         self.server = WebServer(self.poller, self.api, self.poller.alert_manager, port=18095)
+
+    def make_window_server(self, port=18096):
+        """A server whose poller covers two service dates, plus a third on disk."""
+        tomorrow = shift_day(TODAY, 1)
+        older = shift_day(TODAY, -2)
+        api = FakeAPI({
+            TODAY: [payload("CX 759", gate="63", date_str=TODAY)],
+            tomorrow: [payload("UO 612", gate="205", date_str=tomorrow)],
+            older: [payload("HX 100", gate="41", date_str=older)],
+        }, cache=self.cache)
+        poller = Poller(cache=self.cache, api=api,
+                        alert_manager=AlertManager(self.cache),
+                        clock=lambda: clock_at(23, 30))
+        poller.refresh_now()
+        return WebServer(poller, api, poller.alert_manager, port=port), tomorrow, older
 
     def tearDown(self):
         self.server.stop()
@@ -623,6 +854,77 @@ class TestWebServer(TempCacheCase):
         html = self.server.web_ui()
         self.assertIn("<table>", html)
         self.assertIn("HKG Flight Data", html)
+
+    def test_stats_report_the_board_clock_in_hong_kong(self):
+        # The clock is sent from the server because a viewer's browser may be
+        # in any time zone, and the board is Hong Kong's.
+        expected = now_hkt()
+        stats = self.server.get_stats()
+        self.assertEqual(stats["hkt_now"],
+                         "{:02d}:{:02d}".format(*divmod(stats["hkt_minutes"], 60)))
+        self.assertLessEqual(
+            abs(stats["hkt_minutes"] - (expected.hour * 60 + expected.minute)), 1)
+        self.assertTrue(stats["time"].endswith("+08:00"), stats["time"])
+
+    def test_every_element_the_dashboard_script_wires_actually_exists(self):
+        # A renamed id leaves the dashboard dead with no error on the server
+        # side; this is the cheapest way to notice.
+        html = self.server.web_ui()
+        wired = set(re.findall(r'\$\("([^"]+)"\)', html))
+        self.assertTrue(wired)
+        for element_id in sorted(wired):
+            self.assertIn('id="%s"' % element_id, html, element_id)
+
+    def test_the_dashboard_does_not_cap_the_rows_it_renders(self):
+        # The table used to render the first 400 rows while the tab counted
+        # them all, so a full day looked truncated and the two disagreed.
+        self.assertNotIn("rows.slice(", self.server.web_ui())
+
+    def test_api_flights_without_a_date_returns_the_whole_window(self):
+        server, tomorrow, _ = self.make_window_server()
+        try:
+            records = server.api_flights({})
+            self.assertEqual(sorted(r["date"] for r in records), [TODAY, tomorrow])
+        finally:
+            server.stop()
+
+    def test_the_window_arrives_sorted_by_date_then_time(self):
+        # The dashboard's anchor scans the rows in the order they arrive, so
+        # unsorted rows would park the viewport on the wrong day.
+        server, _, _ = self.make_window_server()
+        try:
+            keys = [(r["date"], r["time"]) for r in server.api_flights({})]
+            self.assertEqual(keys, sorted(keys))
+        finally:
+            server.stop()
+
+    def test_an_explicit_date_inside_the_window_is_served_from_it(self):
+        server, tomorrow, _ = self.make_window_server()
+        try:
+            records = server.api_flights({"date": [tomorrow]})
+            self.assertEqual([r["date"] for r in records], [tomorrow])
+        finally:
+            server.stop()
+
+    def test_an_explicit_date_outside_the_window_is_fetched_live(self):
+        server, tomorrow, older = self.make_window_server()
+        try:
+            records = server.api_flights({"date": [older]})
+            self.assertEqual([r["date"] for r in records], [older])
+            # Serving it live must not quietly change what the board covers.
+            self.assertEqual(server.poller.snapshot()["records_dates"], [TODAY, tomorrow])
+        finally:
+            server.stop()
+
+    def test_stats_report_the_window_and_the_boards_own_date(self):
+        server, tomorrow, _ = self.make_window_server()
+        try:
+            stats = server.get_stats()
+            self.assertEqual(stats["dates"], [TODAY, tomorrow])
+            self.assertEqual(stats["date"], TODAY)
+            self.assertEqual(stats["hkt_date"], now_hkt().date().isoformat())
+        finally:
+            server.stop()
 
 
 # --------------------------------------------------------------------- CLI
@@ -701,15 +1003,22 @@ class TestCLISearch(unittest.TestCase):
         self.assertEqual(cli._search_dates("2026-09-11"), ["2026-09-11"])
 
     def test_search_dates_covers_today_by_default(self):
-        noon = datetime(2026, 9, 11, 12, 0, tzinfo=cli._HKT)
+        noon = datetime(2026, 9, 11, 12, 0, tzinfo=HKT)
         self.assertEqual(cli._search_dates(None, noon), ["2026-09-11"])
 
     def test_search_dates_spans_midnight(self):
         # A query at 23:30 must still find the 00:05 departure tomorrow.
-        late = datetime(2026, 9, 11, 23, 30, tzinfo=cli._HKT)
+        late = datetime(2026, 9, 11, 23, 30, tzinfo=HKT)
         self.assertEqual(cli._search_dates(None, late), ["2026-09-11", "2026-09-12"])
-        early = datetime(2026, 9, 12, 1, 0, tzinfo=cli._HKT)
+        early = datetime(2026, 9, 12, 1, 0, tzinfo=HKT)
         self.assertEqual(cli._search_dates(None, early), ["2026-09-11", "2026-09-12"])
+
+    def test_search_dates_is_the_board_rule_not_a_copy_of_it(self):
+        # A search and the board it searches must never disagree about which
+        # days are "now": one rule, one owner.
+        for hour in range(24):
+            when = datetime(2026, 9, 11, hour, 30, tzinfo=HKT)
+            self.assertEqual(cli._search_dates(None, when), board_dates(when), hour)
 
 
 class TestCLIRendering(TempCacheCase):
@@ -977,14 +1286,14 @@ class TestIntegration(TempCacheCase):
         api = FakeAPI([payload("CX 759", gate="62")], cache=self.cache)
         alerts = AlertManager(self.cache)
         poller = Poller(cache=self.cache, api=api, alert_manager=alerts)
-        poller.refresh_today()
+        poller.refresh_now()
 
         api.data = [payload("CX 759", gate="63")]
-        poller.refresh_today()
+        poller.refresh_now()
         self.assertEqual(alerts.active_count(), 1)
 
         api.data = [payload("CX 759", gate="63", status="Departed 09:10")]
-        poller.refresh_today()
+        poller.refresh_now()
         self.assertEqual(alerts.active_count(), 0)
 
 

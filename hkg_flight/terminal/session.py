@@ -8,7 +8,7 @@ commands; it never starts threads, stops servers or touches the API.
 
 import threading
 
-from .state import AppState, dispatch, reconcile
+from .state import AppState, dispatch, park, reconcile
 from .presenter import (
     FLIGHT_PAGES,
     ALERTS,
@@ -18,7 +18,7 @@ from .presenter import (
     airline_rows,
 )
 from ..poller import Poller
-from ..utils import log
+from ..utils import hkt_minutes, log, now_hkt
 
 
 WEB_OFF = "off"
@@ -30,14 +30,20 @@ class Session:
     """Owns one poller, one web server, one airline loader, one UI state."""
 
     def __init__(self, cache=None, api=None, alert_manager=None,
-                 port=8080, no_poll=False, poll_interval=30, close_timeout=2.0):
+                 port=8080, no_poll=False, poll_interval=30, close_timeout=2.0,
+                 clock=now_hkt):
         self.cache = cache
         self.api = api
         self.alert_manager = alert_manager
         self.port = port
+        # The board's current moment in Hong Kong. A moment, not a time of day:
+        # the board spans two service dates around midnight, and "01:30" alone
+        # does not say which one the viewport should park on. Injected so the
+        # anchor rules can be tested at any hour.
+        self.clock = clock
         self.poller = Poller(
             cache=cache, api=api, alert_manager=alert_manager,
-            poll_interval=poll_interval, enabled=not no_poll,
+            poll_interval=poll_interval, enabled=not no_poll, clock=clock,
         )
 
         self.web_server = None
@@ -179,8 +185,18 @@ class Session:
 
     def handle(self, action):
         """Reduce one UI action and execute any side-effect commands it yields."""
-        rows = self.rows_for(self.state.current)
-        self.state, commands = dispatch(self.state, rows, action)
+        kind = action.get("type", "")
+        # A page action switches first, so both the rows and the anchor have to
+        # be taken for the page being switched *to*, never the one being left.
+        target = action.get("page") if kind == "page" else self.state.current
+        if target not in self.state.pages:
+            target = self.state.current
+        if kind == "anchor_now":
+            action = dict(action, **self._moment())
+        rows = self.rows_for(target)
+        minutes, date = self._anchor(target)
+        self.state, commands = dispatch(
+            self.state, rows, action, anchor=minutes, anchor_date=date)
         for command in commands:
             if command == "refresh":
                 self.request_refresh()
@@ -190,9 +206,41 @@ class Session:
                 self.close()
         return commands
 
+    # -- time anchor -----------------------------------------------------
+    def _moment(self):
+        """The board's clock, split into the two halves an anchor needs."""
+        now = self.clock()
+        return {"minutes": hkt_minutes(now), "date": now.date().isoformat()}
+
+    def _anchor(self, page_name=None):
+        """``(minutes, date)``, but only for a page that still follows the clock."""
+        name = page_name or self.state.current
+        page = self.state.pages.get(name)
+        if page is None or name not in FLIGHT_PAGES or not page.anchor_auto:
+            return None, None
+        moment = self._moment()
+        return moment["minutes"], moment["date"]
+
+    def reanchor(self):
+        """Park the current page on the clock, if it still follows it.
+
+        Called when the app starts and whenever a refresh lands. That is what
+        "show the current flights" means in practice: the list moves on its own
+        until the user takes it over, and stops moving the moment they do.
+        """
+        if self.state.current not in FLIGHT_PAGES:
+            return
+        page = self.state.pages[self.state.current]
+        if not page.anchor_auto:
+            return
+        minutes, date = self._anchor(self.state.current)
+        park(self.state, self.rows_for(self.state.current), minutes, date)
+
     def reconcile(self):
         """Re-clamp selection against the current rows (refresh, filter, page)."""
-        reconcile(self.state, self.rows_for(self.state.current))
+        rows = self.rows_for(self.state.current)
+        minutes, date = self._anchor()
+        reconcile(self.state, rows, minutes, date)
 
     # -- cleanup ---------------------------------------------------------
     def close(self):

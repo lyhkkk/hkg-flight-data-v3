@@ -64,7 +64,12 @@ def _rows(session, page_name, search):
     return session.rows_for(page_name)
 
 
-def _title(session, page_name, search, count, total=None):
+def _title(session, page_name, search, count, width, total=None):
+    """Page title plus the active search/filter; cut to ``width``.
+
+    The search term is the user's own text and the title grows with the filter
+    state, so this line is clamped like every other rendered line.
+    """
     page = session.state.pages[page_name]
     text = views.PAGE_TITLES[page_name]
     if search:
@@ -74,8 +79,8 @@ def _title(session, page_name, search, count, total=None):
     if page.status_filter:
         text += f" | Status: {page.status_filter}"
     if total is None:
-        return f"{text} ({count})"
-    return f"{text} | Matches {count} / Total {total}"
+        return views.truncate(f"{text} ({count})", width)
+    return views.truncate(f"{text} | Matches {count} / Total {total}", width)
 
 
 def render_block(session, page_name, search, offset, page_size=DEFAULT_PAGE_SIZE,
@@ -88,7 +93,7 @@ def render_block(session, page_name, search, offset, page_size=DEFAULT_PAGE_SIZE
     width = width or terminal_width()
     compact = views.is_compact(width)
     snap = session.snapshot()
-    lines = [f"HKG | {views.status_line(snap)}"]
+    lines = [views.plain_header_line(snap, width)]
     rows = _rows(session, page_name, search)
     start = clamp_offset(offset, len(rows), page_size)
     window = rows[start:start + page_size]
@@ -97,20 +102,20 @@ def render_block(session, page_name, search, offset, page_size=DEFAULT_PAGE_SIZE
         total = sum(
             1 for r in snap["flights"].get("records", [])
             if r.get("type") == ("departure" if page_name == DEPARTURES else "arrival"))
-        lines.append(_title(session, page_name, search, len(rows), total))
+        lines.append(_title(session, page_name, search, len(rows), width, total))
         if not compact:
             lines.append(views.flight_header(width))
         lines.append(views.rule(width))
         for row in window:
             lines.extend(views.flight_row(row["record"], width, compact=compact))
     elif page_name == ALERTS:
-        lines.append(_title(session, page_name, search, len(rows)))
+        lines.append(_title(session, page_name, search, len(rows), width))
         lines.append(views.alert_header(width))
         lines.append(views.rule(width))
         for row in window:
             lines.append(views.alert_line(row["record"], width))
     else:
-        lines.append(_title(session, page_name, search, len(rows)))
+        lines.append(_title(session, page_name, search, len(rows), width))
         lines.append(views.rule(width))
         for row in window:
             lines.append(views.airline_line(row, width))

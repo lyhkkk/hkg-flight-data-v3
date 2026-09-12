@@ -1,11 +1,24 @@
 # HKG Flight Data v3
 
 A flight information retrieval system for Hong Kong International Airport (HKIA).
-The base package uses only the Python 3.7+ standard library and provides:
+The base package uses only the Python 3.9+ standard library and provides:
 
 - Terminal flight workbench (optional Textual UI, stdlib plain-text fallback)
 - Web dashboard with 30-second auto-refresh polling
 - CLI commands for searching flights and listing departures/arrivals
+
+Departures and arrivals open on the flights that are current **now**, in Hong
+Kong time. `[` / `]` page one screen forward or back from that anchor, and `t`
+hands the list back to the clock; the first manual move pins it, so a refresh
+cannot drag the view away from what you were reading. The web dashboard behaves
+the same way, with `◀` / `▶` / `Now` buttons.
+
+Around midnight the board carries two **service dates** — today plus the
+neighbouring day — because the last departures of the night leave after 00:00
+and the first arrivals land before 02:00. The header says so (`Data date
+2026-09-12 +1`), and the anchor remembers which of the two days it is parked on,
+so opening the board at 01:30 shows tonight's flights rather than yesterday's
+01:30.
 
 ## Requirements
 
@@ -87,10 +100,12 @@ python -m hkg_flight clear-cache 2026-08-16
 python -m hkg_flight clear-cache --yes  # Skip confirmation
 ```
 
-Dates use `YYYY-MM-DD` format. If no date is given for `query`, it searches today —
-plus the neighbouring day between 22:00–01:59 HKT, so late-night and
-early-morning flights are still found.
-If no date is given for `departures` / `arrivals`, the current date is used.
+Dates use `YYYY-MM-DD` format. With no date, `query` searches the same window the
+board shows: today, plus the neighbouring day between 22:00–01:59 HKT, so
+late-night and early-morning flights are still found. It is one shared rule, not
+a second copy of it, so a search cannot look at different days than the board.
+With no date, `departures` / `arrivals` list the current date only — their output
+is titled with the date it shows.
 
 ### Query output & pagination
 
@@ -129,6 +144,8 @@ In the terminal workbench:
 | `Esc` | Close panel → clear page filter → return from auxiliary page |
 | `↑` `↓` `PgUp` `PgDn` `Home` `End` | Move selection and scroll |
 | `←` / `→` | Page backwards / forwards (list focus) |
+| `[` / `]` | Page one screen backwards / forwards from the time anchor |
+| `t` | Hand the list back to the clock (`Now`) |
 | `Tab` / `Shift+Tab` | Cycle focus (list → search → filter) |
 | `f` | Toggle the filter panel (status filter) |
 | `r` / `w` | Refresh / toggle web server |
@@ -178,11 +195,16 @@ The dashboard is available at `http://127.0.0.1:PORT` (default `8080`). It is a
 single self-contained page with two views — flights and gate/stand changes —
 and refreshes itself every 30 seconds. It exposes JSON API endpoints such as:
 
-- `/api/flights`
+- `/api/flights` (no `date` = the whole board window, earliest date first)
 - `/api/search`
 - `/api/alerts`
-- `/api/stats`
+- `/api/stats` (source, the served date window, counts, and the HKT clock)
 - `/api/airlines`
+
+The flights view anchors the same way the workbench does, on a service date and
+a time of day, so opening the page at 01:30 shows tonight's 01:30 and not
+yesterday's. `◀` / `▶` step one screen from the anchor, and `Now` re-follows the
+clock; a pinned view is left where you put it.
 
 Press `Ctrl+C` in the terminal to stop the web server.
 

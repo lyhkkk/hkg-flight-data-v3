@@ -9,7 +9,7 @@ the system, so no renderer has to defend itself against control characters or
 markup-like text later on.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 import re
 import shutil
 import sys
@@ -28,6 +28,52 @@ def today_str():
 def validate_date(date_str):
     """True when ``date_str`` is a YYYY-MM-DD string."""
     return isinstance(date_str, str) and bool(_DATE_RE.fullmatch(date_str))
+
+
+# -- clock ---------------------------------------------------------------
+
+# Hong Kong is the board's reference clock: the data is HKIA's, and "now" is
+# what decides which flights are current. A fixed offset is correct - Hong Kong
+# has not observed daylight saving since 1979.
+HKT = timezone(timedelta(hours=8))
+
+
+def now_hkt():
+    """Current time in Hong Kong."""
+    return datetime.now(HKT)
+
+
+def hkt_minutes(now=None):
+    """Minutes since midnight in Hong Kong - the flight board's clock.
+
+    ``now`` is injectable so the anchor rules can be exercised without waiting
+    for a particular time of day. Minutes alone do not name a moment on a board
+    that spans two service dates, so anything that parks a viewport on the
+    clock needs :func:`board_dates` alongside it.
+    """
+    now = now or now_hkt()
+    return now.hour * 60 + now.minute
+
+
+def board_dates(now=None):
+    """Service dates the board covers at ``now`` (HKT), earliest first.
+
+    The board is not always one day wide. Between 22:00 and 01:59 the flights
+    that are "current" belong to two service dates: at 23:30 the next ones are
+    tomorrow's, and at 01:30 the ones that just left are yesterday's. Outside
+    that band one date is enough.
+
+    ``now`` is injectable so the rule can be tested without waiting for the
+    clock. The result is always ordered, always contains today, and never
+    contains a date more than one day away.
+    """
+    now = now or now_hkt()
+    today = now.date()
+    if now.hour >= 22:
+        return [today.isoformat(), (today + timedelta(days=1)).isoformat()]
+    if now.hour < 2:
+        return [(today - timedelta(days=1)).isoformat(), today.isoformat()]
+    return [today.isoformat()]
 
 
 # -- text ----------------------------------------------------------------

@@ -11,12 +11,12 @@ import os
 import re
 import sys
 import time
-from datetime import datetime, timedelta, timezone
 
 from .cache import CacheSystem, DEFAULT_CACHE_DIR, DEFAULT_WEB_PORT
 from .api import APIClient
 from .alerts import AlertManager
 from .utils import (
+    board_dates,
     today_str,
     normalize_flight_number,
     log,
@@ -28,8 +28,6 @@ from .terminal import views
 from .terminal.presenter import detail_lines, sort_alerts
 
 DEFAULT_PAGE_SIZE = 10
-
-_HKT = timezone(timedelta(hours=8))
 
 # A stand is one of the HKIA prefixes followed by 1-3 digits. "G" is excluded
 # so gate queries (G28) stay distinct, and the digit requirement keeps short
@@ -56,19 +54,13 @@ def _is_airline_code(term):
 def _search_dates(date_str, now=None):
     """Dates to search when the caller did not pin one (HKT-aware).
 
-    22:00-01:59 spans midnight, so late-night and early-morning queries look at
-    the neighbouring day as well; 02:00-21:59 searches today only. ``now`` is
-    injectable so the rule can be tested without waiting for the clock.
+    An explicit date is taken literally; otherwise the rule lives in
+    :func:`utils.board_dates`, shared with the poller so a search and the board
+    it is searching never disagree about which days are "now".
     """
     if date_str:
         return [date_str]
-    now = now or datetime.now(_HKT)
-    today = now.date()
-    if now.hour >= 22:
-        return [today.isoformat(), (today + timedelta(days=1)).isoformat()]
-    if now.hour < 2:
-        return [(today - timedelta(days=1)).isoformat(), today.isoformat()]
-    return [today.isoformat()]
+    return board_dates(now)
 
 
 def _matches(records, term, include_codeshare):

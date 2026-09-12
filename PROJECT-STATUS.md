@@ -2,7 +2,101 @@
 
 > 最后更新: 2026-09-12
 
-## 项目状态: ✅ TUI 真机验证通过，283 项测试 + lint 全绿
+## 项目状态: ✅ 时间锚点 + 跨日窗口完成，395 项测试 + lint 全绿
+
+## 第六轮 — 2026-09-12（时间锚点 + 跨日窗口）
+
+两件事按顺序做：先让列表**打开时停在"现在"**（用户翻页可接管），再让看板**跨午夜带上相邻日**。
+第二步做完才发现第一步的锚点是错的——这正是本轮最有价值的部分。
+
+### 第一步：时间锚点
+
+离港 / 到达页打开时停在**当前 HKT 航班**上（第一条时间 ≥ 现在的航班）；`[` / `]` 从锚点翻整屏
+（步长 = 当前一屏实际渲染的行数，所以下一屏接着上一屏，不漏航班）；`t` / Web 的 `Now` 交还控制权。
+首次手动移动（`↑↓`、`PgUp/PgDn`、`Home/End`、`[`/`]`）即**固定**锚点，标签从 `Now HH:MM` 变
+`Pinned HH:MM`，之后的刷新不再把列表拽回"现在"。Web 端同样行为（`◀` / `▶` / `Now`）。
+
+### 第二步：跨日窗口 —— 以及它暴露的锚点缺陷
+
+服务日期从午夜开始，但一天的飞行不是：夜里最后几班 00:00 之后才走，清晨最早的几班 02:00 之前
+就落地。只看"今天"会同时丢掉两头，所以看板按窗口规则抓 1–2 天：
+
+| HKT | 服务日期 |
+|---|---|
+| 22:00–23:59 | 今天 + 明天 |
+| 00:00–01:59 | 昨天 + 今天 |
+| 02:00–21:59 | 仅今天 |
+
+规则只有一份实现（`utils.board_dates`），`cli._search_dates` 直接委托给它，所以**看板与搜索
+不可能对"现在覆盖哪几天"各算各的**（有一条测试专门扫 24 小时断言两者恒等）。
+窗口由**一次**读钟算出——再读一次可能跨过 23:59:59，把今天的窗口标成明天的。
+
+#### 锚点缺陷：只看时刻会停在昨天
+
+两天看板让第一步的锚点**直接失效**。锚点原本只是"距午夜的分钟数"，而两天看板上 `01:30` 有两条。
+**先量后改**（`R:/Temp/probe_crossday.py`）：
+
+| 输入 | 修复前落到 |
+|---|---|
+| `anchor_index(rows, 90)`（01:30） | index 0 = **昨天** 01:30 |
+| `anchor_index(rows, 8*60)`（08:00） | 昨天 08:00 |
+
+整个 **22:00–01:59 档**都是错的——用户等的今晚航班，视口停在昨晚。
+修复：锚点升级为 `(服务日期, 时刻)` 二元组，`anchor_index(rows, minutes, date=None)` 比较元组；
+不带 `date` 时退化为纯时刻（单日看板行为完全不变，有测试锁住）。
+**行本身不带日期时视为属于正在锚定的那一天**——payload 省了日期，班期没省。
+
+反向验证：浏览器内对照（`blind` → 昨天 01:00；带日期 → 今天 01:00）+ 单测
+`test_the_date_is_what_stops_the_anchor_falling_a_day_behind`。
+
+#### 顺带确定的三条契约
+
+| 决定 | 理由 |
+|---|---|
+| `records_date`（看板自己的钟面日期）与 `records_dates`（实际窗口）分开 | 表头只在**今天不在窗口任何一天**时才标 `(previous)`；窗口只是从昨天开始，那是**当前**看板，用 `+1` 标注跨度（`Data date 2026-09-12 +1`） |
+| `/api/flights` 不带 `date` 返回整个窗口，**并排序** | 前端按行序扫描定位锚点，乱序会停在错误的日期上。顺序是契约 |
+| 窗口里只要有一天来自缓存，整轮来源标记为 `cache` | 一半实时一半记忆不能自称实时。某一天失败时另一天照常发布并记录错误（半张看板好过空看板） |
+
+#### 顺带修掉的真实缺陷：plain 表头/页标题不看宽度
+
+本轮把 `+1` 加进表头时发现，`plain.render_block` 的第一行
+（`HKG | Data date … | Source …`）和页标题行**根本没有宽度约束**——它们是渲染层里仅剩的
+两个不遵守「任何渲染行 ≤ 请求宽度」的地方。**先量**（`R:/Temp/probe_plain_width.py`）：
+45 列下溢出 6 格，30 列下 31 格，长错误串下最多溢出 **55 格**。
+
+修复：新增 `views.plain_header_line(snap, width)`（宽度归 views 所有），页标题走
+`views.truncate`。反证：先写测试跑挂（`AttributeError` + `48 > 45`），再改代码。
+修完探针 **0 条超宽**。
+
+### 测试
+
+| | 之前 | 现在 |
+|---|---|---|
+| 用例数 | 334 | **395** |
+| 3.13（无 Textual） | 334 / 16 skipped | **395 / 17 skipped** |
+| 3.14（Textual 8.2.8） | 334 / 0 skipped | **395 / 0 skipped** |
+| `ruff check .` | 通过 | 通过 |
+
+新增覆盖：`board_dates` 三档（7）、poller 跨日合并 / source 降级 / 单日失败（7）、
+`retain_dates`（4）、`anchor_index` 跨日含反证（8）、Session 时钟返回**时刻**而非分钟、
+`views.date_text` / `anchor_label` / `plain_header_line`、web 窗口默认值与排序、
+plain 整块宽度不变量。
+
+**注入时钟**是本轮的硬性要求：`Session(clock=now_hkt)` / `Poller(clock=…)` 注入的都是**时刻**。
+原来 `TestWebServer` / `TestPoller` / `TestTextualApp` 用真实时钟，22:00–02:00 之间会自动去抓
+两天，`api.calls == 1` 这类断言夜里必挂——已全部固定时钟。
+
+### 验证方式
+
+- **真浏览器**：无头 Edge 跑真实 `web._PAGE`（stub `window.fetch`，`file://` + `--dump-dom`），
+  7 个场景全过——初始锚点、翻屏、固定、`Now` 归还、跨日翻页带日期标签。
+- **真机 Textual**：200 行夹具、两天都在，`export_screenshot()` 按 `y` 重组行验证。
+- 两套解释器 + ruff 全绿。
+
+### 已知问题
+
+- `tests/` 里 Web 服务器用例偶发 `WinError 10048`（端口被占用）导致 1 条 error，
+  连跑 3 次复现不到。与本次改动无关，属既有的端口复用竞态。
 
 ## 第五轮修正 — 2026-09-12（装上 Textual，真机验证 + 两处结论订正）
 
@@ -258,7 +352,7 @@ CLI 把宽度写死成 `DEFAULT_WIDTH = 78`，完全不看真实终端。78 列�
 |------|------|
 | Python | 3.9+（基础包），3.11 / 3.13 为 CI 目标；本机 3.13 与 3.14 均通过 |
 | 依赖 | 基础包仅标准库；`.[tui]` 可选引入 Textual |
-| 测试 | **283 用例通过**（装了 Textual 8.2.8 时 0 skipped；未装时 12 skipped） |
+| 测试 | **395 用例通过**（装了 Textual 8.2.8 时 0 skipped；未装时 17 skipped） |
 | Lint | `ruff check .` 全部通过 |
 | 数据源连接 | ✅ 实测（今日 417 departures / 415 arrivals） |
 
@@ -320,15 +414,15 @@ CLI 把宽度写死成 `DEFAULT_WIDTH = 78`，完全不看真实终端。78 列�
 ```bash
 python -m compileall -q hkg_flight tests cleanup_alerts.py test_hkg_flight.py   # OK
 python -m ruff check .                                                          # All checks passed
-python -m unittest discover -s . -p "test*.py"                                  # 283 tests, OK
+python -m unittest discover -s . -p "test*.py"                                  # 395 tests, OK
 ```
 
 两个解释器都跑过：
 
 | 解释器 | 结果 |
 |---|---|
-| Python 3.14 + Textual 8.2.8 | 283 tests, **OK（0 skipped）** |
-| Python 3.13（无 Textual） | 283 tests, OK（skipped=12） |
+| Python 3.14 + Textual 8.2.8 | 395 tests, **OK（0 skipped）** |
+| Python 3.13（无 Textual） | 395 tests, OK（skipped=17） |
 
 本轮另做了 Web 端到端冒烟：起服务器 → `/` 返回仪表盘 → `/api/alerts` 返回
 `CX759 GATE 62 → 63` → `/api/stats` 报告 `source=api, flights=1, alerts=1`。
@@ -338,8 +432,9 @@ python -m unittest discover -s . -p "test*.py"                                  
 - 增强 UI 需要 `.[tui]`；本机已装 Textual 8.2.8，增强 UI 测试与真机几何均已验证
 - 窄终端的**不折行**已用真实数据全宽度扫描验证，并在真机 Textual 上复现验证；
   观感仍建议在真机手机上人工看一眼
-- 香港业务日期语义（Asia/Hong_Kong 统一）仍为独立待决项
-- 告警上限 500 条、按当前数据日期清理，`cleanup_alerts.py` 现在只用于手工查看/清空
+- 香港业务日期语义：**"看板覆盖哪几天"已落地**为 `utils.board_dates` 窗口规则（HKT 固定
+  UTC+8，自 1979 年起无夏令时，故无需时区库）；若将来出现其它业务日期口径，仍需单独裁定
+- 告警上限 500 条、按看板窗口清理，`cleanup_alerts.py` 现在只用于手工查看/清空
 
 ## 后续建议
 

@@ -1,9 +1,15 @@
 """
 HKG Flight Data v3 - Poller.
 
-One worker thread refreshes today's flights on an interval and on demand, then
-publishes an immutable snapshot. Readers always see a complete, consistent
+One worker thread refreshes the board's flights on an interval and on demand,
+then publishes an immutable snapshot. Readers always see a complete, consistent
 snapshot; a refresh never mutates data a caller already received.
+
+The board is not always one day wide: :func:`utils.board_dates` decides whether
+"now" needs one service date or two, and every refresh fetches exactly that
+window and merges it into one list. Merging rather than filtering is what lets
+the anchor walk from tonight's last departure into tomorrow's first one without
+the board ever going blank.
 
 Concurrency model, stated plainly: there is exactly **one writer** (the worker
 thread), and ``_refresh`` never runs concurrently with itself. A manual request
@@ -20,7 +26,7 @@ snapshot only needs a shallow list copy to stay safe.
 import threading
 from datetime import datetime
 
-from .utils import log, normalize_flights, today_str
+from .utils import board_dates, log, normalize_flights, now_hkt
 
 
 # A snapshot older than this (seconds) is reported as STALE by the UI.
@@ -32,12 +38,15 @@ class Poller:
     """Background refresher that publishes an atomic flight snapshot."""
 
     def __init__(self, cache=None, api=None, alert_manager=None,
-                 poll_interval=30, enabled=True):
+                 poll_interval=30, enabled=True, clock=now_hkt):
         self.cache = cache
         self.api = api
         self.alert_manager = alert_manager
         self.poll_interval = poll_interval
         self.enabled = enabled
+        # The board's current moment, in Hong Kong. Injected so the window rule
+        # can be exercised at 23:30 and 01:30 without waiting for the clock.
+        self.clock = clock
 
         self._cond = threading.Condition()
         self._thread = None
@@ -49,6 +58,7 @@ class Poller:
         self._meta = {
             "revision": 0,
             "records_date": "",
+            "records_dates": [],
             "source": "none",
             "last_attempt_at": None,
             "last_api_success_at": None,
@@ -123,8 +133,8 @@ class Poller:
             self._refresh()
 
     # -- refresh ---------------------------------------------------------
-    def refresh_today(self):
-        """Refresh synchronously on the calling thread; returns the records."""
+    def refresh_now(self):
+        """Refresh the board's window synchronously; returns the records."""
         self._refresh()
         with self._cond:
             return list(self._records)
@@ -138,19 +148,24 @@ class Poller:
 
         try:
             attempt_at = datetime.now().isoformat(timespec="seconds")
-            date_str = today_str()
-            records, source, error, api_ok = self._load(date_str)
+            # One clock reading decides both the window and the board's date,
+            # so a refresh landing at 23:59:59 cannot fetch today's window and
+            # then label it tomorrow.
+            now = self.clock()
+            dates = board_dates(now)
+            records, source, error, api_ok = self._load(dates)
 
             with self._cond:
                 if self._closed:
                     return
                 previous = self._records
-                self._publish_locked(date_str, records, source, error, api_ok, attempt_at)
+                self._publish_locked(now.date().isoformat(), dates, records,
+                                     source, error, api_ok, attempt_at)
 
             # Alert detection runs outside the lock against the previous
             # baseline. It only sees records, never the live snapshot.
             if records is not None and self.alert_manager is not None:
-                self.alert_manager.retain_date(date_str)
+                self.alert_manager.retain_dates(dates)
                 if previous:
                     old_map = {r.get("key"): r for r in previous}
                     for new_rec in records:
@@ -165,40 +180,52 @@ class Poller:
             with self._cond:
                 self._refreshing = False
 
-    def _load(self, date_str):
-        """Fetch today's data, falling back to cache then to memory.
+    def _load(self, dates):
+        """Fetch the board's dates, falling back to cache then to memory.
 
         Returns ``(records|None, source, error, api_ok)``. ``records is None``
         means no new data was obtained and the previous snapshot stands.
+
+        A date that only the cache can supply downgrades the whole snapshot to
+        ``cache``: a board that is half live and half remembered must not claim
+        to be live. One date failing outright still leaves the other on screen,
+        with ``last_error`` set, because half a board beats an empty one.
         """
-        raw = None
+        records = []
         error = None
         api_ok = False
-        try:
-            raw = self.api.fetch_flights(date_str)
-            if raw is not None:
-                api_ok = True
-        except Exception as exc:
-            error = str(exc)
-            log(f"Refresh error: {exc}")
+        cached = False
 
-        if raw is None and self.cache is not None:
+        for date_str in dates:
+            raw = None
             try:
-                raw = self.cache.read_flights(date_str)
-            except Exception:
-                raw = None
-            if raw is not None:
-                log(f"Using cached data for {date_str}")
-                return normalize_flights(raw), "cache", error, api_ok
+                raw = self.api.fetch_flights(date_str)
+                if raw is not None:
+                    api_ok = True
+            except Exception as exc:
+                error = str(exc)
+                log(f"Refresh error: {exc}")
 
-        if raw is None:
+            if raw is None and self.cache is not None:
+                try:
+                    raw = self.cache.read_flights(date_str)
+                except Exception:
+                    raw = None
+                if raw is not None:
+                    cached = True
+                    log(f"Using cached data for {date_str}")
+
+            if raw is not None:
+                records.extend(normalize_flights(raw))
+
+        if not records:
             with self._cond:
                 have_records = bool(self._meta.get("records_date"))
             return None, ("memory" if have_records else "none"), error or "api_failed", api_ok
 
-        return normalize_flights(raw), "api", error, api_ok
+        return records, ("cache" if cached else "api"), error, api_ok
 
-    def _publish_locked(self, date_str, records, source, error, api_ok, attempt_at):
+    def _publish_locked(self, date_str, dates, records, source, error, api_ok, attempt_at):
         """Install a new snapshot. Caller holds the lock."""
         meta = dict(self._meta)
         meta["revision"] = meta.get("revision", 0) + 1
@@ -215,6 +242,7 @@ class Poller:
         if records is not None:
             self._records = records
             meta["records_date"] = date_str
+            meta["records_dates"] = list(dates)
 
         self._meta = meta
 
@@ -236,13 +264,13 @@ class Poller:
         return snap
 
     @property
-    def today_records(self):
-        """Shallow copy of today's records (records themselves are immutable)."""
+    def board_records(self):
+        """Shallow copy of the board's records (the records are immutable).
+
+        Covers the whole window - one service date, or two around midnight.
+        """
         with self._cond:
             return list(self._records)
-
-    def get_today(self):
-        return self.today_records
 
     def revision(self):
         """Cheap change detector for UIs that poll frequently."""

@@ -94,16 +94,28 @@ class AlertManager:
         for field in ("gate", "stand"):
             self._process_field(key, field, old, new)
 
-    def retain_date(self, date_str):
-        """Drop alerts that do not belong to ``date_str`` (called per refresh)."""
-        if not date_str:
+    def retain_dates(self, dates):
+        """Drop alerts that belong to none of ``dates`` (called per refresh).
+
+        The board is one or two service dates wide, so this takes the whole
+        window. Keeping only one of them would delete the alerts of flights the
+        user can still see, and the baseline with them - the flight would then
+        look freshly allocated and its next change would be silently swallowed.
+        """
+        wanted = {date for date in (dates or []) if date}
+        if not wanted:
             return
         with self.lock:
-            kept = [a for a in self._alerts if a.get("date", "") == date_str]
+            kept = [a for a in self._alerts if a.get("date", "") in wanted]
             if len(kept) == len(self._alerts):
                 return
             self._alerts = kept
-            self._baseline = {p: v for p, v in self._baseline.items() if p[0].startswith(date_str)}
+            # A flight key starts with its service date, so the window decides
+            # which baselines survive exactly as it decides which alerts do.
+            self._baseline = {
+                pair: value for pair, value in self._baseline.items()
+                if pair[0].split("_", 1)[0] in wanted
+            }
             self._revision += 1
             payload = [dict(a) for a in self._alerts]
         self._persist(payload)

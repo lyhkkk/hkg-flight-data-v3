@@ -84,10 +84,40 @@ completed with a 2-letter airline code so `query CX759` works either way.
 
 - Minimum 0.6 s between API calls; the timing decision is serialized so
   concurrent callers cannot all observe the same free slot.
-- Polling cycle: every 30 s (today's flights only).
+- Polling cycle: every 30 s, over the board window (§3.4).
 - Airline metadata: 24 h cache; `--force` bypasses it for one run.
 
 Fallback order: live API → cached file → previous in-memory snapshot.
+
+### 3.4 Board window
+
+The board shows one or two **service dates**, decided by one rule
+(`utils.board_dates`) from a single reading of the clock:
+
+| Hong Kong time | Service dates |
+|---|---|
+| `22:00–23:59` | today, tomorrow |
+| `00:00–01:59` | yesterday, today |
+| `02:00–21:59` | today |
+
+A service date starts at midnight, but a day's flying does not: the last
+departures of the night leave after 00:00 and the first arrivals of the morning
+land before 02:00. A board built from today alone would drop both, so around
+midnight it carries the neighbouring day too. The window always contains today,
+never reaches more than one day away, and is always ordered earliest-first.
+
+The rule is read from **one** clock reading per cycle. Asking the clock again
+mid-fetch could straddle 23:59:59 and label today's window as tomorrow's.
+
+The same rule decides which dates `query` searches (§7), so the board and a
+search of it cannot disagree about which days "now" covers.
+
+The board reports its own clock date (`records_date`) and the window it actually
+carries (`records_dates`) separately. They differ around midnight, and the
+header marks the board `(previous)` only when **today appears in neither** —
+that is, when the snapshot is left over from an earlier run. A window that
+merely starts yesterday is the current board and is labelled with a span
+instead.
 
 ## 4. Backend
 
@@ -128,9 +158,10 @@ flight that returns to its baseline (`N24 -> S47 -> N24`) is no longer
 divergent, so its alert clears. So does a flight that departs, lands or is
 cancelled — its position is no longer actionable.
 
-Alerts are stored newest-first and capped at 500. Alerts whose date is not the
-current data date are dropped on load and on every refresh, so a long-running
-process does not accumulate yesterday's rows.
+Alerts are stored newest-first and capped at 500. Alerts whose date is not in the
+board window (§3.4) are dropped on load and on every refresh, so a long-running
+process does not accumulate yesterday's rows — and so a flight that crosses into
+the window keeps the alert it already raised.
 
 ### 4.3 Alert lifecycle
 
@@ -154,6 +185,18 @@ without disturbing a caller that already read it.
 - `--no-poll` disables timed refreshes but still performs one first refresh.
 - A failed request still advances the revision, so the UI can show that a
   refresh was attempted.
+- Each cycle reads the clock once, takes the board window from it (§3.4) and
+  fetches every date in the window, merging the results into one board.
+
+Two things can go partly wrong in a two-date cycle, and neither may be reported
+as full success:
+
+- **Half remembered.** If any date came from the cache rather than the API, the
+  cycle reports `cache`. Half live and half remembered must not claim to be
+  live. Only a window that came entirely from the API reports `api`.
+- **Half missing.** If one date fails, the other is still published and the
+  error is recorded. Half a board beats an empty one; the failure is visible in
+  the header and the exit code rather than hidden by dropping the day.
 
 Records are **published, never mutated**: `normalize_flights` builds a fresh
 list of fresh dicts each cycle and nothing writes to it afterwards, so a
@@ -244,13 +287,44 @@ page.
 page keeps its selection, offset, search and filters across refreshes; a
 disappearing selected row degrades visibly to its nearest neighbour and says so.
 
-### 5.5 Status display
+### 5.5 Time anchor
+
+Departures and arrivals open on the flights that are current **now** — the list
+is parked on the earliest row scheduled at or after the board's clock, read in
+Hong Kong time. A board with nothing left in the day parks on its last rows
+rather than showing an empty screen.
+
+The anchor is a **service date and a time of day**, not a time of day alone.
+Around midnight the board carries two dates (§3.4), and `01:30` on its own names
+two different flights; anchoring on minutes alone parks the viewport on
+yesterday's 01:30 while the user is waiting for tonight's. A row that carries no
+date of its own belongs to the date being anchored on — the payload omitted it,
+the schedule did not. On a one-date board the date changes nothing.
+
+The anchor follows the clock on every landed refresh until the user takes the
+list over: the first manual move, `Home`/`End` or `[`/`]` pins it, and the
+search line then reads `Pinned HH:MM` instead of `Now HH:MM`. `t` hands the
+list back to the clock. `[` and `]` step exactly one screen — as many rows as
+the body currently renders — so the screen after the jump starts where the one
+before it ended and no flight is skipped between presses. In search, those keys
+type text instead.
+
+Once the list is pinned, the label dates itself whenever the anchor sits on a
+date other than the board's own clock date — `Pinned 09-13 01:30` — because
+"Pinned 01:30" does not say which night that is. The header carries the span
+(`Data date 2026-09-12 +1`) so the board itself never looks like it holds one
+day's flights when it holds two.
+
+The anchor is derived from the rows on screen and never hides data: it moves the
+viewport, it does not filter. Search, filters and selection keep their meaning.
+
+### 5.6 Status display
 
 Statuses show text plus a colour category (boarding/departed green, delayed
 yellow, cancelled red, …). Unknown fields render as `—`; `NO_COLOR` disables
 ANSI colour everywhere.
 
-### 5.6 Alert view
+### 5.7 Alert view
 
 Gate/stand divergences newest-first, as an aligned table: when the change was
 seen, the flight, the field and its before/after values, and the current status.
@@ -267,15 +341,32 @@ ON / ERROR. A busy port reports ERROR, never a false ON.
 | Endpoint | Method | Description |
 |---|---|---|
 | `/` | GET | Dashboard (dark theme, HKIA accent `#faa718`) |
-| `/api/flights?date=&type=&terminal=&status=` | GET | Flights for a date |
+| `/api/flights?date=&type=&terminal=&status=` | GET | Flights for a date, or the whole board window |
 | `/api/search?flight=&date=` | GET | Search flights |
 | `/api/alerts` | GET | Gate/stand divergences, newest first |
-| `/api/stats` | GET | Feed health (source, date, flight/alert counts) |
+| `/api/stats` | GET | Feed health (source, dates, flight/alert counts, HKT clock) |
 | `/api/airlines` | GET | Airline list |
 
 The dashboard is a single self-contained page with two views — flights and
 gate/stand changes — and refreshes itself every 30 s. Rendering happens in the
 browser; the server only ever sends JSON.
+
+`/api/flights` with no `date` returns the whole board window (§3.4), sorted
+earliest-first. The order is part of the contract, not a convenience: the page
+anchors by scanning rows in arrival order, and unsorted rows would park it on
+the wrong day. A window that spans midnight therefore arrives as one ordered
+board, exactly as the workbench shows it.
+
+`/api/stats` carries `hkt_now` (`HH:MM`), `hkt_minutes` and `hkt_date`, computed
+on the server: the board is Hong Kong's, so "now" cannot come from the viewer's
+clock. It also carries `dates`, the window the server is serving, which the page
+uses to label the span (`2026-09-12 +1`). The flights view parks on the current
+flights the same way the workbench does — on load, on every refresh, and on the
+`◀` / `▶` keys or buttons, which step one screen of rows. The search row shows
+`Now HH:MM` while the view still follows the clock and `Pinned HH:MM` once the
+user has scrolled or stepped, dating the label (`Pinned 09-13 01:30`) when the
+anchor is not on the board's own date; `Now` re-follows it. A landed refresh
+leaves a pinned view where the user left it.
 
 ## 7. CLI
 
@@ -291,14 +382,16 @@ python -m hkg_flight alerts                   # Active alerts
 python -m hkg_flight clear-cache [DATE] [--yes]
 ```
 
-Dates use `YYYY-MM-DD`. Without a date, `query` searches today; between
-22:00–01:59 HKT it also looks at the neighbouring day so late-night and
-early-morning flights are found. A result set covering more than one day is
-divided by a dated rule (`-- 2026-09-11 ----`), so the same scheduled time on
-consecutive days cannot read as a duplicated row. A stand or gate query that
-matches nothing falls back to a flight-number match, so an input such as `D7`
-never silently hides a flight. Result sets over 10 rows, and airline-code
-searches, use a 10-row interactive pager.
+Dates use `YYYY-MM-DD`. Without a date, `query` searches the board window
+(§3.4): today, plus the neighbouring day between 22:00–01:59 HKT, so late-night
+and early-morning flights are found. It is the same rule the board uses, not a
+copy of it, so a search cannot look at a different set of days than the board it
+searches. A result set covering more than one day is divided by a dated rule
+(`-- 2026-09-11 ----`), so the same scheduled time on consecutive days cannot
+read as a duplicated row. A stand or gate query that matches nothing falls back
+to a flight-number match, so an input such as `D7` never silently hides a
+flight. Result sets over 10 rows, and airline-code searches, use a 10-row
+interactive pager.
 
 Table output follows the terminal width (see §5.2). At 80 columns or more a
 flight is one row under a column header; below that the header is dropped and

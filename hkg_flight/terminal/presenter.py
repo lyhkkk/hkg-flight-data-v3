@@ -134,6 +134,67 @@ def matches_filters(rec, airline="", status=""):
     return True
 
 
+# -- time anchor ---------------------------------------------------------
+
+def row_minutes(rec):
+    """Minutes since midnight for a record's scheduled time, or ``None``.
+
+    Accepts ``HH:MM`` and the unpadded ``H:MM`` alike: both name a real
+    departure time, and dropping one because of its padding would take a
+    flight off the board. Anything that does not read as a time on a 24-hour
+    clock - including a bare ``HH`` and out-of-range values - returns ``None``,
+    and the anchor skips it rather than guessing.
+    """
+    parts = str(rec.get("time") or "").strip().split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour * 60 + minute
+
+
+def anchor_index(rows, minutes, date=None):
+    """Index of the earliest row at or after the board's current moment.
+
+    ``minutes`` is minutes since midnight on the board's clock (HKT) and
+    ``rows`` must already be in display order. Returns ``len(rows)`` when every
+    row is in the past, so the caller can fall back to the tail of the list
+    instead of showing nothing.
+
+    ``date`` is the service date that clock reading belongs to, and it matters
+    on a board that spans two service dates (22:00-01:59): rows are ordered by
+    ``(date, time)``, so comparing time-of-day alone parks the viewport on
+    *yesterday's* 01:30 when it is 01:30 in the morning. With no date the
+    comparison stays time-only, which is right for a one-date board.
+
+    The earliest qualifying row is found by scanning rather than by trusting
+    the sort order. Rows with an unreadable time sort to the front (their sort
+    key is ``""``), and the anchor must not land on one of those merely because
+    it happens to come first. A row carrying no date belongs to the day being
+    anchored on: the payload omitted it, the schedule did not.
+    """
+    best_index = len(rows)
+    best_value = None
+    for index, row in enumerate(rows):
+        row_value = row_minutes(row["record"])
+        if row_value is None:
+            continue
+        if date is None:
+            position, floor = row_value, minutes
+        else:
+            position = (str(row["record"].get("date") or date), row_value)
+            floor = (date, minutes)
+        if position < floor:
+            continue
+        if best_value is None or position < best_value:
+            best_index, best_value = index, position
+    return best_index
+
+
 # -- projections ---------------------------------------------------------
 
 def page_flights(snapshot, page_name):

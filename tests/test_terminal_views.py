@@ -6,8 +6,14 @@ import time
 import unittest
 
 from hkg_flight.terminal import views
-from hkg_flight.terminal.presenter import DEPARTURES, ARRIVALS, ALERTS, AIRLINES
-from hkg_flight.terminal.state import AppState, reconcile
+from hkg_flight.terminal.presenter import (
+    DEPARTURES,
+    ARRIVALS,
+    ALERTS,
+    AIRLINES,
+    visible_rows,
+)
+from hkg_flight.terminal.state import AppState, PageState, dispatch, park, reconcile
 from tests.fixtures.terminal.data import (
     make_combined_snapshot,
     make_flight,
@@ -535,6 +541,225 @@ class TestThemeMatchesTheRenderer(unittest.TestCase):
 
     def test_the_chrome_row_count_matches_views(self):
         self.assertEqual(len(self.CHROME), views.CHROME_ROWS)
+
+
+class TestClockText(unittest.TestCase):
+    def test_formats_as_a_board_clock(self):
+        self.assertEqual(views.clock_text(0), "00:00")
+        self.assertEqual(views.clock_text(18 * 60 + 5), "18:05")
+        self.assertEqual(views.clock_text(23 * 60 + 59), "23:59")
+
+    def test_wraps_past_midnight_instead_of_printing_a_25th_hour(self):
+        self.assertEqual(views.clock_text(24 * 60), "00:00")
+        self.assertEqual(views.clock_text(-1), "23:59")
+
+    def test_no_anchor_renders_nothing(self):
+        self.assertEqual(views.clock_text(None), "")
+
+
+class TestDateText(unittest.TestCase):
+    """The board names every service date it covers, not just the first."""
+
+    def test_one_date_is_named_as_is(self):
+        self.assertEqual(views.date_text({"records_dates": ["2026-09-12"]}), "2026-09-12")
+
+    def test_a_window_says_how_much_further_it_reaches(self):
+        # Around midnight the board carries two days; naming only one of them
+        # would claim the other day's flights belong to it.
+        self.assertEqual(views.date_text({"records_dates": ["2026-09-12", "2026-09-13"]}),
+                         "2026-09-12 +1")
+
+    def test_the_earlier_date_is_named_first(self):
+        # The early-morning window is [yesterday, today] and must not be shown
+        # as today plus one.
+        self.assertEqual(views.date_text({"records_dates": ["2026-09-11", "2026-09-12"]}),
+                         "2026-09-11 +1")
+
+    def test_a_snapshot_without_the_window_falls_back_to_its_one_date(self):
+        self.assertEqual(views.date_text({"records_date": "2026-09-12"}), "2026-09-12")
+
+    def test_blank_entries_are_skipped(self):
+        self.assertEqual(views.date_text({"records_dates": ["", None]}), "—")
+        self.assertEqual(views.date_text({"records_dates": ["", "2026-09-12"]}), "2026-09-12")
+
+    def test_no_date_at_all_is_a_dash(self):
+        self.assertEqual(views.date_text({}), "—")
+
+    def test_short_date_drops_the_year(self):
+        self.assertEqual(views.short_date("2026-09-13"), "09-13")
+        self.assertEqual(views.short_date(""), "")
+        self.assertEqual(views.short_date(None), "")
+
+    def test_the_span_reaches_both_the_header_and_the_status_line(self):
+        snap = {
+            "flights": {"records_dates": ["2026-09-12", "2026-09-13"],
+                        "records_date": "2026-09-12", "source": "api"},
+            "web": {"status": "off", "error": None, "port": 8080},
+        }
+        self.assertIn("2026-09-12 +1", views.header_line(snap, snap["web"], width=120))
+        self.assertIn("2026-09-12 +1", views.status_line(snap))
+
+    def test_a_window_that_includes_today_is_not_marked_previous(self):
+        # A board covering [yesterday, today] is the *current* board. Marking it
+        # "previous" would be a lie told by the one line that must not lie.
+        snap = {
+            "flights": {"records_dates": ["2026-09-11", "2026-09-12"],
+                        "records_date": "2026-09-12", "source": "api"},
+            "web": {"status": "off", "error": None, "port": 8080},
+        }
+        line = views.header_line(snap, snap["web"], today="2026-09-12", width=120)
+        self.assertIn("2026-09-11 +1", line)
+        self.assertNotIn("previous", line)
+
+    def test_a_board_with_no_data_for_today_is_still_marked_previous(self):
+        snap = {
+            "flights": {"records_dates": ["2026-09-09"], "records_date": "2026-09-09",
+                        "source": "cache"},
+            "web": {"status": "off", "error": None, "port": 8080},
+        }
+        line = views.header_line(snap, snap["web"], today="2026-09-12", width=120)
+        self.assertIn("previous", line)
+
+
+class TestAnchorLabel(unittest.TestCase):
+    @staticmethod
+    def page(minutes, auto=True, date=None):
+        page = PageState()
+        page.anchor_minutes = minutes
+        page.anchor_date = date
+        page.anchor_auto = auto
+        return page
+
+    def test_says_whether_the_clock_is_still_driving(self):
+        self.assertEqual(views.anchor_label(self.page(18 * 60 + 5)), "Now 18:05")
+        self.assertEqual(views.anchor_label(self.page(18 * 60 + 5, auto=False)),
+                         "Pinned 18:05")
+
+    def test_a_page_with_no_anchor_has_no_label(self):
+        self.assertEqual(views.anchor_label(self.page(None)), "")
+
+    def test_the_date_appears_when_the_anchor_left_the_boards_day(self):
+        # Paged past midnight: "Pinned 01:30" does not say which night.
+        page = self.page(1 * 60 + 30, auto=False, date="2026-09-13")
+        self.assertEqual(views.anchor_label(page, day="2026-09-12"),
+                         "Pinned 09-13 01:30")
+
+    def test_the_date_is_omitted_while_the_anchor_is_on_the_boards_day(self):
+        page = self.page(18 * 60 + 5, date="2026-09-12")
+        self.assertEqual(views.anchor_label(page, day="2026-09-12"), "Now 18:05")
+
+    def test_without_a_board_date_the_label_stays_short(self):
+        page = self.page(1 * 60 + 30, auto=False, date="2026-09-13")
+        self.assertEqual(views.anchor_label(page), "Pinned 01:30")
+
+
+class TestSearchLineAnchor(unittest.TestCase):
+    def build(self, minutes=18 * 60 + 5, auto=True, search="", count=30, day=None):
+        snap = make_combined_snapshot(count)
+        state = AppState()
+        state.current = DEPARTURES
+        reconcile(state, [{"id": "x", "record": {}}])
+        page = state.pages[DEPARTURES]
+        page.anchor_minutes = minutes
+        page.anchor_date = day
+        page.anchor_auto = auto
+        page.search_text = search
+        return state, snap
+
+    def test_the_anchor_rides_along_with_the_counts(self):
+        state, snap = self.build()
+        line = views.search_line(state, snap, width=120)
+        self.assertIn("Now 18:05", line)
+        self.assertIn("Matches", line)
+
+    def test_the_counts_survive_a_narrow_terminal(self):
+        # The anchor is the first thing to go: the counts are what the user
+        # acts on.
+        state, snap = self.build()
+        line = views.search_line(state, snap, width=24)
+        self.assertIn("Matches", line)
+
+    def test_a_pinned_page_says_so(self):
+        state, snap = self.build(auto=False)
+        self.assertIn("Pinned 18:05", views.search_line(state, snap, width=120))
+
+    def test_an_anchor_on_another_service_date_is_dated(self):
+        state, snap = self.build(minutes=1 * 60 + 30, auto=False, day="2026-09-13")
+        snap["flights"]["records_date"] = "2026-09-12"
+        self.assertIn("Pinned 09-13 01:30", views.search_line(state, snap, width=120))
+
+
+class TestRowCapacityMatchesTheBody(unittest.TestCase):
+    """One screen is one screen: the page key and the renderer must agree.
+
+    The page key steps by :func:`views.row_capacity`; if the body rendered a
+    different number of rows, the next screen would start somewhere other than
+    where this one ended - skipping flights or repeating them.
+    """
+
+    def build(self, count=400):
+        snap = make_combined_snapshot(count)
+        state = AppState()
+        state.current = DEPARTURES
+        rows = visible_rows(snap["flights"], DEPARTURES, "")
+        reconcile(state, rows)
+        return state, snap, rows
+
+    def test_the_rendered_window_is_exactly_the_stepped_screen(self):
+        state, snap, rows = self.build()
+        for width, height in ((120, 40), (100, 30), (60, 24), (55, 20)):
+            park(state, rows, 0)
+            capacity = views.row_capacity(state, rows, width, height)
+            self.assertGreater(capacity, 0, (width, height))
+            dispatch(state, rows, {"type": "anchor_step", "direction": "next",
+                                   "capacity": capacity})
+            page = state.pages[DEPARTURES]
+            self.assertEqual(page.offset, capacity, (width, height))
+            body = "\n".join(views.body_lines(state, snap, width, height, False))
+            rendered = [self.render(row, page, width) for row in rows]
+            for line in rendered[capacity:capacity + capacity]:
+                self.assertIn(line, body, (width, height))
+            # The screen before this one must not bleed into it.
+            for line in rendered[:capacity]:
+                self.assertNotIn(line, body, (width, height))
+
+    @staticmethod
+    def render(row, page, width):
+        return "\n".join(views.flight_row(
+            row["record"], width, color=False,
+            selected=row["id"] == page.selected_id,
+            compact=views.is_compact(width)))
+
+    def test_the_body_never_renders_more_rows_than_it_reports(self):
+        state, snap, rows = self.build()
+        for width, height in ((120, 40), (100, 30), (60, 24), (55, 20), (44, 18)):
+            park(state, rows, 0)
+            capacity = views.row_capacity(state, rows, width, height)
+            body = "\n".join(views.body_lines(state, snap, width, height, False))
+            rendered = [self.render(row, state.pages[DEPARTURES], width)
+                        for row in rows]
+            present = [line for line in rendered if line in body]
+            self.assertLessEqual(len(present), capacity, (width, height))
+
+    def test_the_last_screen_is_full_rather_than_a_stub(self):
+        # Near the end there are fewer rows left than a screen holds, so the
+        # renderer pulls the window back to keep it full. The last screen
+        # therefore overlaps the one before it - which is the point: the user
+        # gets a screenful, not a two-row remainder.
+        state, snap, rows = self.build(count=60)
+        width, height = 100, 30
+        capacity = views.row_capacity(state, rows, width, height)
+        # The clock has run past the last flight, so the anchor clamps to the
+        # tail of the list.
+        park(state, rows, 24 * 60)
+        page = state.pages[DEPARTURES]
+        self.assertEqual(page.offset, len(rows) - 1)
+        body = "\n".join(views.body_lines(state, snap, width, height, False))
+        rendered = [self.render(row, page, width) for row in rows]
+        present = [line for line in rendered if line in body]
+        self.assertEqual(len(present), capacity)
+        self.assertIn(rendered[-1], body)
+        self.assertIn(rendered[-capacity], body)
 
 
 if __name__ == "__main__":

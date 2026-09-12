@@ -251,18 +251,19 @@ def _paged(lines, available, width, scroll=0):
     return window
 
 
-def _window(rows, page, rows_area, line_cost=1):
-    """Slice of ``rows`` that fits in ``rows_area`` display lines.
+def _window(rows, page, capacity):
+    """Slice of ``rows`` that fits in ``capacity`` display rows.
 
-    ``rows_area`` is the space left for rows alone - the caller has already
-    subtracted its own header and rule.
+    ``capacity`` counts *rows*, not lines: the caller works it out with
+    :func:`row_capacity`, which owns the header and line-cost rules, so the
+    list and the page-step key cannot disagree about where a screen ends.
 
     The offset is derived for rendering only and never written back to state,
     so the selected row can never scroll out of sight.
     """
     if not rows:
         return []
-    capacity = max(1, max(1, rows_area) // max(1, line_cost))
+    capacity = max(1, int(capacity or 1))
     offset = max(0, min(int(getattr(page, "offset", 0) or 0), len(rows) - 1))
     selected = max(0, min(int(getattr(page, "selected_index", 0) or 0), len(rows) - 1))
     if selected < offset:
@@ -271,6 +272,22 @@ def _window(rows, page, rows_area, line_cost=1):
         offset = selected - capacity + 1
     offset = max(0, min(offset, max(0, len(rows) - capacity)))
     return rows[offset:offset + capacity]
+
+
+def row_capacity(state, rows, width, height):
+    """Flight rows the body's list area holds - one screen for the page keys.
+
+    This is the single owner of "how many rows fit": :func:`body_lines` renders
+    its window with it, and the workbench steps its time anchor by it, so one
+    press of the page key lands exactly where the next screen begins.
+    """
+    tier = layout_tier(width, height)
+    if tier == "size_hint":
+        return 1
+    available = max(1, height - CHROME_ROWS)
+    line_cost = 2 if tier == "compact" else 1
+    head = _list_head(state, rows, width, tier)
+    return max(1, max(1, available - len(head)) // line_cost)
 
 
 def layout_tier(width, height):
@@ -352,12 +369,24 @@ def status_line(snap, now=None, poll_interval=30):
     """One-line data-source summary (shared by the plain adapter)."""
     flights = snap["flights"]
     source = str(flights.get("source", "none")).upper()
-    date = flights.get("records_date", "")
-    parts = [f"Data date {date or '—'}", f"Source {source}"]
+    parts = [f"Data date {date_text(flights)}", f"Source {source}"]
     if flights.get("last_error"):
         parts.append(f"error: {flights['last_error']}")
     parts.append(freshness(flights, now=now, poll_interval=poll_interval))
     return " | ".join(parts)
+
+
+def plain_header_line(snap, width=None):
+    """The plain adapter's header: ``HKG | <status summary>``, cut to ``width``.
+
+    The plain adapter prints raw lines and has no second row to spill into, so
+    a header that is too long wraps and pushes the table apart. The TUI header
+    drops fields one at a time until it fits; here the line is simply cut. The
+    error text comes from the API and has no length bound, and around midnight
+    the date text grows by ``" +1"``, so the cut is not a corner case.
+    """
+    width = terminal_width() if width is None else width
+    return truncate("HKG | " + status_line(snap), width)
 
 
 def fit(forms, width, **fields):
@@ -391,8 +420,14 @@ def header_line(snap, web, now=None, poll_interval=30, today=None, width=None):
     width = terminal_width() if width is None else width
     flights = snap["flights"]
     _source_label, source_time = _health(snap)
-    date = flights.get("records_date", "")
-    if today is not None and date and date != today:
+    date = date_text(flights)
+    # "previous" means the board carries no data for today at all - a snapshot
+    # left over from an earlier run. A window that merely *starts* yesterday is
+    # not previous: it is the current board, and says so with "+1".
+    board_dates = [d for d in (flights.get("records_dates") or []) if d]
+    if not board_dates and flights.get("records_date"):
+        board_dates = [flights["records_date"]]
+    if today is not None and board_dates and today not in board_dates:
         date = f"{date} (previous)"
     fresh = freshness(flights, now, poll_interval)
     error = "ERR" if flights.get("last_error") else ""
@@ -458,18 +493,75 @@ def footer_line(tier, state, width=None):
             " / typing…  Enter  Esc",
         )
     else:
+        # These strings are printed raw but measured with ``text_width``, which
+        # strips markup. ``[ ]`` is safe (the tag pattern needs a letter after
+        # the bracket) - a form like ``[t]`` would measure short and be chosen
+        # at a width where it does not fit.
         forms = (
-            " / Search  Enter Detail  f Filter  r Refresh  w Web  ? Help  q Quit",
-            " / Search  Enter Detail  f Filter  r Refresh  w Web  ? q",
-            " / Search  Enter Detail  f r w  ? q",
+            " / Search  Enter Detail  [ ] Time  t Now  f Filter  r Refresh  w Web  ? Help  q Quit",
+            " / Search  Enter Detail  [ ] Time  t Now  f Filter  r Refresh  w Web  ? q",
+            " / Search  Enter Detail  [ ] Time  t Now  f r w  ? q",
+            " / Search  Enter  [ ] Time  t Now  f r w  ? q",
             " / Search  Enter  f r w  ? q",
             " / ? q",
         )
     return fit(forms, width) or truncate(forms[-1], width)
 
 
+# -- dates and the time anchor -------------------------------------------
+
+def clock_text(minutes):
+    """``18:05`` for minutes since midnight; empty for "no anchor"."""
+    if minutes is None:
+        return ""
+    minutes = int(minutes) % (24 * 60)
+    return "{:02d}:{:02d}".format(minutes // 60, minutes % 60)
+
+
+def short_date(date_str):
+    """``2026-09-13`` -> ``09-13``; empty when there is no date."""
+    date_str = str(date_str or "")
+    return date_str[5:] if len(date_str) == 10 else date_str
+
+
+def date_text(flights):
+    """The board's service date(s): ``2026-09-12``, or ``2026-09-12 +1``.
+
+    Around midnight the board carries two service dates, and naming only one of
+    them would claim the other day's flights belong to it. ``+1`` is how many
+    further days the window reaches.
+    """
+    dates = [d for d in (flights.get("records_dates") or []) if d]
+    if not dates:
+        return flights.get("records_date", "") or "—"
+    if len(dates) == 1:
+        return dates[0]
+    return "{} +{}".format(dates[0], len(dates) - 1)
+
+
+def anchor_label(page, day=None):
+    """How the page's time anchor is set: ``Now 18:05`` / ``Pinned 09-13 01:30``.
+
+    "Now" means the top of the list keeps following the board's clock; the
+    first manual move or page step pins it, and the label says which, because
+    that is the difference between a list that will jump on the next refresh
+    and one that will not.
+
+    The date appears only when the anchor is not on ``day``, the board's own
+    clock date: on a board that spans midnight, "Pinned 01:30" does not say
+    which night that is.
+    """
+    if page.anchor_minutes is None:
+        return ""
+    when = clock_text(page.anchor_minutes)
+    anchor_date = getattr(page, "anchor_date", None)
+    if anchor_date and day and anchor_date != day:
+        when = "{} {}".format(short_date(anchor_date), when)
+    return ("Now " if page.anchor_auto else "Pinned ") + when
+
+
 def search_line(state, snap, width=None):
-    """Search/filter state and the match count for the current page."""
+    """Search/filter state, the time anchor and the match count for the page."""
     width = terminal_width() if width is None else width
     page = state.pages[state.current]
     if state.current in FLIGHT_PAGES:
@@ -489,14 +581,22 @@ def search_line(state, snap, width=None):
         counts = f"Matches {len(rows)} / Total {total}"
         # With nothing typed and nothing filtered the counts are the whole
         # story, and "Search: —" is a label with no value.
+        search = ""
         if page.search_text or filters:
-            text = "Search: " + (page.search_text or "—")
+            search = "Search: " + (page.search_text or "—")
             if filters:
-                text += "   " + "   ".join(filters)
-            text += f"   {counts}"
-        else:
-            text = counts
-        return truncate(text, width)
+                search += "   " + "   ".join(filters)
+        anchor = anchor_label(page, day=snap["flights"].get("records_date"))
+        # A ladder, not a truncation: the counts are what the user acts on, so
+        # the anchor goes first and the search summary second.
+        forms = []
+        if search:
+            forms.append(f"{search}   {anchor}   {counts}" if anchor
+                         else f"{search}   {counts}")
+        if anchor:
+            forms.append(f"{anchor}   {counts}")
+        forms.append(counts)
+        return fit(forms, width) or truncate(counts, width)
     if state.current == ALERTS:
         rows = alert_rows(snap["alerts"]["alerts"], page.search_text)
     else:
@@ -717,6 +817,7 @@ def _help_block(available, width):
         "1/2/5/6  page        /  search        Enter  detail/apply",
         "Esc      close/clear/back          Tab  focus",
         "up/down/PgUp/PgDn/Home/End  move   f  filter",
+        "[ ]  next/prev screen from the clock   t  follow it again",
         "r refresh   w web   ? help   q quit   Ctrl+Q/Ctrl+C quit",
         "In search, letters/digits/W/Q type text (Ctrl+Q quits).",
     ], available, width)
@@ -778,9 +879,8 @@ def body_lines(state, snap, width, height, color, detail_scroll=0):
         return [truncate(line, width) for line in _empty_lines(state, snap)[:available]]
 
     page = state.pages[state.current]
-    line_cost = 2 if tier == "compact" else 1
     head = _list_head(state, rows, width, tier)
-    window = _window(rows, page, max(1, available - len(head)), line_cost)
+    window = _window(rows, page, row_capacity(state, rows, width, height))
 
     out = list(head)
     for row in window:
@@ -801,7 +901,7 @@ def _wide_body(state, snap, rows, width, available, color, scroll=0):
     right_width = min(36, max(20, width - 80))
     left_width = width - right_width
     # The left column carries a header and a rule above its rows.
-    window = _window(rows, page, max(1, available - 2), 1)
+    window = _window(rows, page, max(1, available - 2))
 
     if state.current in FLIGHT_PAGES:
         left = [truncate(flight_header(left_width), left_width),

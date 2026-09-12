@@ -18,8 +18,6 @@ from textual.widgets import Input, Static
 
 from . import views
 from .presenter import DEPARTURES, ARRIVALS, ALERTS, AIRLINES, FLIGHT_PAGES
-from .state import dispatch
-from ..utils import today_str
 
 
 class FlightBoardApp(App):
@@ -45,6 +43,12 @@ class FlightBoardApp(App):
         Binding("shift+tab", "tab_prev", show=False),
         Binding("left", "page_prev", "Prev", show=False),
         Binding("right", "page_next", "Next", show=False),
+        # Time anchor: one screen forward/back from the clock, and ``t`` to
+        # hand the list back to it. Typed into the search box as ordinary
+        # characters - the focused Input consumes them before they reach here.
+        Binding("left_square_bracket", "anchor_prev", "[", show=False),
+        Binding("right_square_bracket", "anchor_next", "]", show=False),
+        Binding("t", "anchor_now", "Now", show=False),
         Binding("f", "toggle_filter", "Filter", show=False),
         Binding("r", "refresh", "Refresh", show=False),
         Binding("w", "toggle_web", "Web", show=False),
@@ -75,6 +79,9 @@ class FlightBoardApp(App):
         self._mounted = True
         self.set_interval(1.0, self._clock_tick)
         self.set_interval(0.2, self._poll)
+        # Opening the board shows the flights that are current *now*, not the
+        # ones that left at midnight.
+        self.session.reanchor()
         self._refresh_view()
 
     # -- data flow --------------------------------------------------------
@@ -82,6 +89,10 @@ class FlightBoardApp(App):
         latest = self.session.latest_revision()
         if latest != self._last_revision:
             self._last_revision = latest
+            # A landed refresh carries the clock anchor with it, so the list
+            # keeps showing the current flights. ``reanchor`` is a no-op once
+            # the user has taken the list over.
+            self.session.reanchor()
             self.revision += 1
 
     def _clock_tick(self):
@@ -107,7 +118,8 @@ class FlightBoardApp(App):
         # so the terminal width is exactly the width available to the text.
         width = self.size.width
         header.update(views.header_line(self._snap, web, now=time.time(),
-                                        today=today_str(), width=width))
+                                        today=self.session.clock().date().isoformat(),
+                                        width=width))
         nav.update(views.nav_line(
             self.session.state,
             len(self._snap["alerts"]["alerts"]),
@@ -177,9 +189,10 @@ class FlightBoardApp(App):
         self._page(AIRLINES)
 
     def _page(self, name):
-        rows = self.session.rows_for(name)
-        self.session.state, _ = dispatch(
-            self.session.state, rows, {"type": "page", "page": name})
+        # Through the session rather than straight to ``dispatch``: the session
+        # is what knows the board's clock, so a freshly opened page lands on
+        # the current flights.
+        self.session.handle({"type": "page", "page": name})
         self._refresh_view()
 
     def action_search(self):
@@ -216,6 +229,15 @@ class FlightBoardApp(App):
     def action_page_next(self):
         self._move("pgdn")
 
+    def action_anchor_prev(self):
+        self._anchor_step("prev")
+
+    def action_anchor_next(self):
+        self._anchor_step("next")
+
+    def action_anchor_now(self):
+        self._act({"type": "anchor_now"})
+
     def action_tab_next(self):
         self._act({"type": "tab"})
 
@@ -240,6 +262,20 @@ class FlightBoardApp(App):
 
     def _move(self, direction):
         self._act({"type": "move", "direction": direction, "height": self._body_height()})
+
+    def _anchor_step(self, direction):
+        """Jump the anchor one screen forward/back from where it sits.
+
+        The step is measured with :func:`views.row_capacity` - the same function
+        the renderer uses to decide how many rows fit - so the screen after the
+        jump starts exactly where the one before it ended.
+        """
+        state = self.session.state
+        rows = self.session.rows_for(state.current)
+        size = self.size
+        capacity = views.row_capacity(state, rows, size.width, size.height)
+        self._act({"type": "anchor_step", "direction": direction,
+                   "capacity": capacity})
 
     def _act(self, action):
         commands = self.session.handle(action)

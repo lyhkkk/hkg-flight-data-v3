@@ -3,25 +3,32 @@
 import tempfile
 import time
 import unittest
+from datetime import datetime, timedelta
 
 from hkg_flight.alerts import AlertManager
 from hkg_flight.cache import CacheSystem
-from hkg_flight.terminal.presenter import DEPARTURES, ARRIVALS
+from hkg_flight.terminal.presenter import DEPARTURES, ARRIVALS, ALERTS
 from hkg_flight.terminal.session import Session, WEB_ERROR, WEB_OFF, WEB_ON
-from hkg_flight.utils import today_str
+from hkg_flight.utils import HKT, today_str
 
 TODAY = today_str()
 
 
-def raw_payload():
+def shift_day(date_str, days):
+    """``date_str`` moved by ``days``, in the same YYYY-MM-DD form."""
+    year, month, day = (int(part) for part in date_str.split("-"))
+    return (datetime(year, month, day, tzinfo=HKT) + timedelta(days=days)).date().isoformat()
+
+
+def raw_payload(date_str=TODAY):
     return [
-        {"arrival": False, "cargo": False, "date": TODAY, "list": [
+        {"arrival": False, "cargo": False, "date": date_str, "list": [
             {"flight": [{"airline": "CPA", "no": "CX 759"}], "time": "08:40",
              "status": "Boarding", "gate": "63", "terminal": "T1", "destination": ["NRT"]},
             {"flight": [{"airline": "HKE", "no": "UO 612"}], "time": "09:15",
              "status": "Delayed", "gate": "205", "terminal": "T1", "destination": ["KIX"]},
         ]},
-        {"arrival": True, "cargo": False, "date": TODAY, "list": [
+        {"arrival": True, "cargo": False, "date": date_str, "list": [
             {"flight": [{"airline": "CPA", "no": "CX 100"}], "time": "07:00",
              "status": "Landed 06:52", "stand": "W63", "hall": "A", "baggage": "12",
              "terminal": "T1", "origin": ["SYD"]},
@@ -35,11 +42,14 @@ class FakeAPI:
         self.fail = fail
         self.fail_airlines = fail_airlines
         self.airlines_calls = 0
+        self.dates = []
 
     def fetch_flights(self, date_str):
+        self.dates.append(date_str)
         if self.fail:
             raise RuntimeError("offline")
-        return self.raw
+        # ``raw`` is one payload for every date, or a {date: payload} mapping.
+        return self.raw.get(date_str) if isinstance(self.raw, dict) else self.raw
 
     def fetch_airlines_meta(self):
         self.airlines_calls += 1
@@ -59,7 +69,7 @@ def make_session(raw=None, fail=False, **kw):
 class TestProjection(unittest.TestCase):
     def setUp(self):
         self.session, _ = make_session(raw_payload())
-        self.session.poller.refresh_today()
+        self.session.poller.refresh_now()
 
     def tearDown(self):
         self.session.close()
@@ -83,7 +93,7 @@ class TestProjection(unittest.TestCase):
 class TestHandleAndReconcile(unittest.TestCase):
     def setUp(self):
         self.session, _ = make_session(raw_payload())
-        self.session.poller.refresh_today()
+        self.session.poller.refresh_now()
         self.session.reconcile()
 
     def tearDown(self):
@@ -189,6 +199,149 @@ class TestAirlinesFailure(unittest.TestCase):
             self.assertIsNotNone(snap["error"])
         finally:
             session.close()
+
+
+class TestSessionClock(unittest.TestCase):
+    """The session is what knows the board's clock; the reducer never reads it."""
+
+    @staticmethod
+    def at(minutes, day=TODAY):
+        hour, minute = divmod(minutes, 60)
+        year, month, day_of_month = (int(part) for part in day.split("-"))
+        return datetime(year, month, day_of_month, hour, minute, tzinfo=HKT)
+
+    def build(self, minutes=12 * 60, day=TODAY, raw=None):
+        session, _ = make_session(
+            raw if raw is not None else raw_payload(),
+            clock=lambda: self.at(minutes, day))
+        session.poller.refresh_now()
+        return session
+
+    def top_row(self, session, page_name=DEPARTURES):
+        """The record sitting at the top of the viewport."""
+        page = session.state.pages[page_name]
+        return session.rows_for(page_name)[page.offset]["record"]
+
+    def test_a_fresh_flight_page_parks_on_the_clock(self):
+        session = self.build(minutes=8 * 60)
+        try:
+            session.reanchor()
+            page = session.state.pages[DEPARTURES]
+            self.assertEqual(self.top_row(session)["time"], "08:40")
+            self.assertEqual(page.anchor_minutes, 8 * 60)
+            self.assertEqual(page.anchor_date, TODAY)
+            self.assertTrue(page.anchor_auto)
+        finally:
+            session.close()
+
+    def test_a_board_that_is_all_in_the_past_shows_its_tail(self):
+        session = self.build(minutes=23 * 60)
+        try:
+            session.reanchor()
+            page = session.state.pages[DEPARTURES]
+            self.assertEqual(page.offset, len(session.rows_for(DEPARTURES)) - 1)
+        finally:
+            session.close()
+
+    def test_the_anchor_parks_on_today_not_on_yesterday(self):
+        # 01:30 in the morning: the board carries yesterday as well, and its
+        # rows come first. Parking on the clock means today's 08:40, not a
+        # flight that left a day ago.
+        yesterday = shift_day(TODAY, -1)
+        session = self.build(
+            minutes=1 * 60 + 30,
+            raw={yesterday: raw_payload(yesterday), TODAY: raw_payload(TODAY)})
+        try:
+            session.reanchor()
+            top = self.top_row(session)
+            self.assertEqual(top["date"], TODAY)
+            self.assertEqual(top["time"], "08:40")
+            self.assertEqual(session.state.pages[DEPARTURES].anchor_date, TODAY)
+        finally:
+            session.close()
+
+    def test_a_page_opened_in_the_small_hours_also_parks_on_today(self):
+        # The same rule has to hold for arrivals, which is a different row set.
+        yesterday = shift_day(TODAY, -1)
+        session = self.build(
+            minutes=1 * 60 + 30,
+            raw={yesterday: raw_payload(yesterday), TODAY: raw_payload(TODAY)})
+        try:
+            session.handle({"type": "page", "page": ARRIVALS})
+            top = self.top_row(session, ARRIVALS)
+            self.assertEqual(top["date"], TODAY)
+            self.assertEqual(top["time"], "07:00")
+        finally:
+            session.close()
+
+    def test_reanchor_leaves_a_pinned_page_alone(self):
+        session = self.build(minutes=8 * 60)
+        try:
+            session.handle({"type": "page", "page": DEPARTURES})
+            session.handle({"type": "move", "direction": "down"})
+            page = session.state.pages[DEPARTURES]
+            before = page.selected_id
+            self.assertFalse(page.anchor_auto)
+            session.reanchor()
+            self.assertEqual(page.selected_id, before)
+        finally:
+            session.close()
+
+    def test_reanchor_ignores_pages_that_have_no_clock(self):
+        session = self.build(minutes=8 * 60)
+        try:
+            session.handle({"type": "page", "page": ALERTS})
+            session.reanchor()
+            self.assertIsNone(session.state.pages[ALERTS].anchor_minutes)
+        finally:
+            session.close()
+
+    def test_anchor_now_reads_the_clock_through_the_session(self):
+        session = self.build(minutes=13 * 60)
+        try:
+            session.handle({"type": "page", "page": DEPARTURES})
+            session.handle({"type": "move", "direction": "end"})
+            self.assertFalse(session.state.pages[DEPARTURES].anchor_auto)
+            session.handle({"type": "anchor_now"})
+            page = session.state.pages[DEPARTURES]
+            self.assertTrue(page.anchor_auto)
+            self.assertEqual(page.anchor_minutes, 13 * 60)
+            self.assertEqual(page.anchor_date, TODAY)
+        finally:
+            session.close()
+
+    def test_switching_pages_anchors_the_page_being_switched_to(self):
+        # The anchor must be taken for the page being opened, not the one being
+        # left - the two have different clocks only in principle, but the rows
+        # are certainly different.
+        session = self.build(minutes=8 * 60)
+        try:
+            session.handle({"type": "page", "page": ARRIVALS})
+            page = session.state.pages[ARRIVALS]
+            self.assertEqual(self.top_row(session, ARRIVALS)["time"], "07:00")
+            self.assertEqual(page.anchor_minutes, 8 * 60)
+        finally:
+            session.close()
+
+    def test_reconcile_keeps_following_the_clock(self):
+        session = self.build(minutes=8 * 60)
+        try:
+            session.reanchor()
+            session.reconcile()
+            self.assertEqual(self.top_row(session)["time"], "08:40")
+        finally:
+            session.close()
+
+    def test_the_poller_and_the_anchor_read_the_same_clock(self):
+        # A board whose window and whose anchor disagree would park the
+        # viewport on a date the board is not even showing.
+        late = self.build(minutes=23 * 60 + 30)
+        try:
+            snap = late.snapshot()["flights"]
+            self.assertEqual(snap["records_dates"], [TODAY, shift_day(TODAY, 1)])
+            self.assertEqual(snap["records_date"], TODAY)
+        finally:
+            late.close()
 
 
 if __name__ == "__main__":
