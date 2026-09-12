@@ -46,6 +46,22 @@
   **同一个 `y` 上的两个 `<text>`**。把每个 `<text>` 当一行读会**凭空造出折行**。
   正确读法见 `tests/test_terminal_textual.py`：按 `y` 分组、用 `x` 拼回格位；
   单元格宽由「每行右边缘的 marker 段」标定（`max(x) / 终端宽度`，真机是 12.2）。
+- **那个「右边缘 marker 段」就是 Rich 每行结尾的换行段**（`text == '\n'`，
+  位于 `x = 宽度 × cell`），**不是**什么额外的装饰段（2026-09-12 实测）。
+  数量 = 绘制行数 − 2（首行装饰行和最后一行没有）；空 body / 无匹配搜索 /
+  20×10 / 120×30 下都存在，因为 chrome 那 4 行永远在。所以只要画了 ≥3 行，
+  `max(x)` 一定来自它 —— 「空 body 会让校准失准」是**不可达**的。
+  `screen_lines` 现在有守卫：右边缘段非空就报错，绝不静默用错的 cell 拼行。
+- **`html.unescape` 会把 `&#160;` 变成 U+00A0，不是普通空格**（2026-09-12 踩过）。
+  `screen_lines` 里换 `html.unescape` **必须**跟 `.replace("\xa0", " ")`，
+  否则每一行都含 nbsp，`assertIn` 拿 `views` 的普通空格行去比会**全线挂**，
+  而屏幕看起来完全一样。
+- **CLI stdout 只在 `main()` 里 `reconfigure(errors="replace")`**（2026-09-12）。
+  `→`/`←` 在 cp1252/cp437 下不可编码（GBK 可以），不设就抛 `UnicodeEncodeError`。
+  **只改 `errors`，绝不改 encoding** —— 一个 `?` 占一格，保住「渲染行 ≤ 请求宽度」
+  不变量；重编成 UTF-8 反而会破（cp1252 控制台把箭头的 3 字节渲染成 3 个字形）。
+  注意 WorkBuddy 的 shell 有 `PYTHONUTF8=1`，**项目自己的验证命令看不到这个问题**，
+  要复现得 `PYTHONUTF8=0 PYTHONIOENCODING=cp1252`。
 - **TUI chrome 占 4 行**（`views.CHROME_ROWS`），`textual_app._body_height()` 与
   `body_lines` 都用它；`theme.tcss` 里那 4 个 widget 必须各 1 行（有测试解析 CSS 锁住）。
 - **阶梯写法统一用 `views.fit()`**（CLI 与 TUI 共用），不要各写一份。
@@ -67,7 +83,9 @@
 - 增强 UI 测试在未安装 Textual 时自动 skip。**本机已装 Textual 8.2.8，但只装在
   系统 Python 3.14**（`C:\Users\avery\AppData\Local\Programs\Python\Python314\python.exe`）；
   WorkBuddy 托管的 3.13 没有 Textual。要跑真机 TUI 测试就用 3.14，
-  期望 **283 用例、0 skipped**；用 3.13 跑是 **12 skipped**。
+  期望 **286 用例、0 skipped**；用 3.13 跑是 **12 skipped**。
+  （`ruff` 也只在 3.14 里，托管 3.13 没有 —— 用
+  `C:/Users/avery/AppData/Local/Programs/Python/Python314/python.exe -m ruff check .`。）
 - **真机 TUI 测试的写法**（`tests/test_terminal_textual.py`）：
   `app.run_test(size=(w, h))` + `pilot.pause()`；观察屏幕只能用
   `app.export_screenshot()`，并按 `y` 重建行（见上面 `export_screenshot` 陷阱）；
@@ -95,13 +113,18 @@
 ## 验证命令
 
 ```bash
-# 基础包（WorkBuddy 托管 Python 3.13，无 Textual）—— 期望 283 用例、12 skipped
+# 基础包（WorkBuddy 托管 Python 3.13，无 Textual）—— 期望 286 用例、12 skipped
 C:/Users/avery/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe -m compileall -q hkg_flight tests cleanup_alerts.py test_hkg_flight.py
-C:/Users/avery/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe -m ruff check .
 C:/Users/avery/.workbuddy-ai/binaries/python/versions/3.13.12/python.exe -m unittest discover -s . -p "test*.py"
 
-# 真机 TUI（系统 Python 3.14，有 Textual 8.2.8）—— 期望 283 用例、0 skipped
+# ruff 只在系统 3.14 里（托管 3.13 没装）
+C:/Users/avery/AppData/Local/Programs/Python/Python314/python.exe -m ruff check .
+
+# 真机 TUI（系统 Python 3.14，有 Textual 8.2.8）—— 期望 286 用例、0 skipped
 C:/Users/avery/AppData/Local/Programs/Python/Python314/python.exe -m unittest discover -s . -p "test*.py"
+
+# 复现 cp1252 控制台上的编码问题（默认环境有 PYTHONUTF8=1，看不到）
+PYTHONUTF8=0 PYTHONIOENCODING=cp1252 <3.13 解释器> -m unittest test_hkg_flight.TestCLIRendering
 ```
 
 两个解释器都要跑：3.13 证明基础包零依赖，3.14 证明增强 UI 真的能渲染。

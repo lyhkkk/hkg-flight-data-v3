@@ -18,6 +18,7 @@ from hkg_flight.alerts import AlertManager
 from hkg_flight.api import APIClient
 from hkg_flight.cache import CacheSystem
 from hkg_flight.poller import Poller
+from hkg_flight.terminal import views
 from hkg_flight.utils import (
     DEFAULT_WIDTH,
     MAX_WIDTH,
@@ -781,15 +782,37 @@ class TestCLIRendering(TempCacheCase):
             self.assertNotEqual(line.strip(), "G", line)
             self.assertNotEqual(line.strip(), "30", line)
 
+    @staticmethod
+    def _pager_run(records, **kwargs):
+        """Drive the pager with stdout captured, width pinned.
+
+        The pager prints whole flight tables. Letting them reach the console
+        both floods the suite's output and ties the test to whatever code page
+        the console uses - a cp1252 console cannot encode the route arrows
+        (``→``) the rows carry, and the write would raise inside the pager.
+        """
+        import contextlib
+        import io
+        from unittest import mock
+
+        buf = io.StringIO()
+        env = {"COLUMNS": str(DEFAULT_WIDTH)}
+        with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(buf):
+            page = cli.paginate_records(records, "Test", **kwargs)
+        return page, buf.getvalue()
+
     def test_paginate_records_navigation(self):
         records = normalize_flights([payload(f"CX {i}", gate=str(i)) for i in range(25)])
         replies = iter(["n", "p", "2", "q"])
-        last = cli.paginate_records(records, "Test", page_size=10,
+        page, out = self._pager_run(records, page_size=10,
                                     input_func=lambda _p="": next(replies))
-        self.assertEqual(last, 2)
+        self.assertEqual(page, 2)
+        self.assertIn("showing 11-20", out)
 
     def test_paginate_empty(self):
-        self.assertEqual(cli.paginate_records([], "Test"), 0)
+        page, out = self._pager_run([])
+        self.assertEqual(page, 0)
+        self.assertIn("No flights found.", out)
 
     def test_paginate_handles_eof(self):
         records = normalize_flights([payload("CX 759")])
@@ -797,7 +820,56 @@ class TestCLIRendering(TempCacheCase):
         def raise_eof(_prompt=""):
             raise EOFError
 
-        cli.paginate_records(records, "Test", input_func=raise_eof)
+        page, out = self._pager_run(records, input_func=raise_eof)
+        self.assertEqual(page, 1)
+        self.assertIn("CX759", out)
+
+    def test_an_unencodable_route_arrow_does_not_abort_output(self):
+        """cp1252 consoles cannot encode ``→``; the CLI must degrade, not raise."""
+        import io
+        import sys
+        from unittest import mock
+
+        buffer = io.BytesIO()
+        stream = io.TextIOWrapper(buffer, encoding="cp1252", newline="\n")
+        with mock.patch.object(sys, "stdout", stream), \
+                mock.patch.object(sys, "stderr", stream):
+            cli.make_output_robust()
+            print("  → NRT")           # must not raise
+            stream.flush()
+
+        rendered = buffer.getvalue().decode("cp1252")
+        self.assertEqual(rendered, "  ? NRT\n")
+        # The replacement has to stay one cell wide, or the row would render
+        # wider than the width the views were handed.
+        self.assertEqual(views.text_width(rendered.rstrip("\n")),
+                         views.text_width("  → NRT"))
+
+    def test_the_arrow_is_unencodable_without_the_fix(self):
+        """Negative control: the same write raises before ``make_output_robust``."""
+        import io
+        import sys
+        from unittest import mock
+
+        buffer = io.BytesIO()
+        stream = io.TextIOWrapper(buffer, encoding="cp1252", newline="\n")
+        with mock.patch.object(sys, "stdout", stream):
+            with self.assertRaises(UnicodeEncodeError):
+                print("  → NRT")
+
+    def test_the_entry_point_hardens_output_before_printing(self):
+        """``main`` must harden the streams itself, not rely on the caller."""
+        import io
+        import sys
+        from unittest import mock
+
+        buffer = io.BytesIO()
+        stream = io.TextIOWrapper(buffer, encoding="cp1252", newline="\n")
+        with mock.patch.object(sys, "stdout", stream), \
+                mock.patch.object(sys, "stderr", stream):
+            with self.assertRaises(SystemExit):     # --help exits after printing
+                cli.main(["--help"])
+            self.assertEqual(stream.errors, "replace")
 
 
 class TestAdaptiveWidth(unittest.TestCase):

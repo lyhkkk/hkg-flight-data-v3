@@ -4,6 +4,7 @@ Skipped when Textual is not installed, so the base suite stays dependency-free.
 """
 
 import asyncio
+import html
 import importlib.util
 import re
 import tempfile
@@ -56,20 +57,41 @@ class FakeAPI:
                 "source": "api", "ok": True, "error": None}
 
 
+# Textual exports flat ``<text>`` elements today, but the attribute pattern
+# still skips over quoted values so a ``>`` inside one cannot end the tag early.
+_TEXT_RE = re.compile(r'<text((?:"[^"]*"|[^>"])*)>(.*?)</text>', re.S)
+# Anchored so an attribute whose *name* ends in x/y (``index="5"``) cannot be
+# mistaken for the coordinate.
+_X_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_-])x="([^"]*)"')
+_Y_ATTR_RE = re.compile(r'(?<![A-Za-z0-9_-])y="([^"]*)"')
+_INNER_TAG_RE = re.compile(r"<[^>]+>")
+
+
 def _unescape(raw):
-    return (raw.replace("&#160;", " ").replace("&gt;", ">")
-               .replace("&lt;", "<").replace("&amp;", "&"))
+    """SVG text content as plain text.
+
+    ``html.unescape`` covers named, decimal and hex references in one go, so a
+    future Textual that switches to ``&#x2192;`` cannot quietly leave escaped
+    junk in the text. Textual writes its spaces as ``&#160;``, and those have
+    to come back as *plain* spaces: a non-breaking space is a different
+    character to the rows ``views`` produces, so comparisons would stop
+    matching even though the screen looks identical.
+    """
+    return html.unescape(raw).replace("\xa0", " ")
 
 
 def screen_runs(app):
     """``(y, x, text)`` for every run Textual painted, in screen order."""
     svg = app.export_screenshot()
     runs = []
-    for match in re.finditer(r"<text([^>]*)>(.*?)</text>", svg, re.S):
+    for match in _TEXT_RE.finditer(svg):
         attrs, raw = match.group(1), match.group(2)
-        x = float(re.search(r'x="([^"]*)"', attrs).group(1))
-        y = float(re.search(r'y="([^"]*)"', attrs).group(1))
-        runs.append((round(y, 1), x, _unescape(raw)))
+        # Strip inner tags *before* unescaping, so a literal ``&lt;tspan&gt;``
+        # in the text survives as text instead of being eaten as markup.
+        text = _unescape(_INNER_TAG_RE.sub("", raw))
+        x = float(_X_ATTR_RE.search(attrs).group(1))
+        y = float(_Y_ATTR_RE.search(attrs).group(1))
+        runs.append((round(y, 1), x, text))
     return runs
 
 
@@ -88,10 +110,22 @@ def screen_lines(app):
     runs = screen_runs(app)
     if not runs:
         return []
-    # Rich sizes the SVG from the terminal width, and every painted row ends
-    # with a marker run at the right edge, which calibrates the cell width (a
-    # font metric - 12.2 - rather than a round number) without hard-coding it.
-    cell = max(x for _y, x, _text in runs) / max(1, app.size.width)
+    # Rich sizes the SVG from the terminal width, and terminates every painted
+    # line but the last with a blank end-of-line run at ``width * cell``. The
+    # largest x is therefore the right margin, and it calibrates the cell width
+    # (a font metric - 12.2 - rather than a round number) without hard-coding.
+    #
+    # The calibration only holds while that run is blank. If the rightmost run
+    # is content, the cell comes out too small and every run gets spliced in
+    # too far right - silently, since the geometry tests only compare text. So
+    # refuse to guess rather than produce plausible-looking wrong rows.
+    rightmost = max(runs, key=lambda run: run[1])
+    if rightmost[2].strip():
+        raise AssertionError(
+            "cannot calibrate the cell width: the rightmost run is content "
+            "(%r at x=%s), not the end-of-line run at the right margin"
+            % (rightmost[2], rightmost[1]))
+    cell = rightmost[1] / max(1, app.size.width)
     grouped = {}
     for y, x, text in runs:
         if text.strip():
@@ -103,6 +137,14 @@ def screen_lines(app):
             line += " " * max(0, int(round(x / cell)) - views.text_width(line))
             line += text
         lines.append(line)
+    for line in lines:
+        # The guard above covers the cell width; this one covers the splice.
+        # A run placed at the wrong column pushes the row past the terminal,
+        # which is the one failure the geometry tests cannot see in the text.
+        if views.text_width(line) > app.size.width:
+            raise AssertionError(
+                "rebuilt row is wider than the terminal (%d > %d): %r"
+                % (views.text_width(line), app.size.width, line))
     return lines
 
 

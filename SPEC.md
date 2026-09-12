@@ -219,6 +219,12 @@ even at 20 columns.
 
 A row's route cell carries its direction — `← KIX` arriving from KIX, `→ KIX`
 departing for KIX — because one flight number can appear in both directions.
+Those two arrows are not in every code page: on a console that cannot encode
+them (cp1252, cp437) the plain output replaces each with `?` rather than
+failing, so the direction is lost but the row still lines up — one `?` takes
+the one cell the arrow would have had. The workbench paints through Textual
+rather than `print`, and is not affected.
+
 The gate/stand cell shows a departure's gate as `G68` and an arrival's stand
 verbatim as `W63`. The compact row keeps the single-line column order (time,
 flight number, status on line 1; route, gate/stand, terminal on line 2), so

@@ -438,6 +438,28 @@ def _run_terminal_ui(cache, api, alert_manager, port, no_poll, ui="auto"):
 
 # -- entry point ---------------------------------------------------------
 
+def make_output_robust():
+    """Stop an unencodable glyph from aborting a command.
+
+    The rows carry route arrows (``→``/``←``) and they are printed rather than
+    returned, so a console whose code page cannot represent them - cp1252 and
+    cp437 do not, cp936/UTF-8 do - turns a plain listing into a traceback.
+
+    Only ``errors`` is changed, never the encoding: replacing one unencodable
+    character with one ``?`` keeps the "no rendered row exceeds the requested
+    width" invariant. Re-encoding the stream to UTF-8 would break it, because
+    a cp1252 console renders each of the arrow's three bytes as its own glyph.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:          # a test double or a closed stream
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def create_parser():
     parser = argparse.ArgumentParser(
         prog="hkg_flight",
@@ -482,6 +504,7 @@ def create_parser():
 
 
 def main(argv=None):
+    make_output_robust()
     args = create_parser().parse_args(argv)
 
     cache = CacheSystem(cache_dir=args.cache_dir)
